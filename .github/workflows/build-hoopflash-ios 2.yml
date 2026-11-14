@@ -1,0 +1,3017 @@
+name: Build Basketball Speed Trainer iOS App (HoopFlash Pro 2.0 - HomeCourt AR Edition)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-unsigned-ipa:
+    name: Build Unsigned iOS IPA (Zero-Unzip Direct Download)
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository (Optional)
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+
+      - name: Generate Project Structure & Swift Source Code
+        run: |
+          rm -rf HoopFlashPro
+          mkdir -p HoopFlashPro/Sources/Models
+          mkdir -p HoopFlashPro/Sources/Services
+          mkdir -p HoopFlashPro/Sources/Views
+          mkdir -p HoopFlashPro/Resources/Assets.xcassets/AppIcon.appiconset
+
+          # 1. Generate Info.plist (Including UILaunchScreen for Full-Screen iPhone 13 Pro Max Display)
+          cat << 'EOF' > HoopFlashPro/Resources/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>zh_CN</string>
+              <key>CFBundleDisplayName</key>
+              <string>HoopFlash Pro</string>
+              <key>CFBundleExecutable</key>
+              <string>$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key>
+              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>$(PRODUCT_NAME)</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>2.0.0</string>
+              <key>CFBundleVersion</key>
+              <string>2</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>NSCameraUsageDescription</key>
+              <string>HoopFlash Pro 需要使用前置摄像头进行 HomeCourt 级 AI 骨骼姿态追踪，实时检测您的运球护球手触靶、横向滑步与敏捷跨步，所有视频均在设备端 Neural Engine 实时计算，绝不保存或上传。</string>
+              <key>UIApplicationSceneManifest</key>
+              <dict>
+                  <key>UIApplicationSupportsMultipleScenes</key>
+                  <false/>
+              </dict>
+              <key>UILaunchScreen</key>
+              <dict/>
+              <key>UIRequiredDeviceCapabilities</key>
+              <array>
+                  <string>arm64</string>
+              </array>
+              <key>UIStatusBarStyle</key>
+              <string>UIStatusBarStyleLightContent</string>
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationPortrait</string>
+              </array>
+          </dict>
+          </plist>
+          EOF
+
+          # 2. Generate Programmatic App Icon
+          cat << 'EOF' > generate_icon.swift
+          import AppKit
+
+          let size = CGSize(width: 1024, height: 1024)
+          let image = NSImage(size: size)
+          image.lockFocus()
+
+          guard let ctx = NSGraphicsContext.current?.cgContext else { exit(1) }
+
+          let colorSpace = CGColorSpaceCreateDeviceRGB()
+          let bgColors = [
+              CGColor(red: 0.04, green: 0.06, blue: 0.11, alpha: 1.0),
+              CGColor(red: 0.09, green: 0.13, blue: 0.22, alpha: 1.0)
+          ] as CFArray
+          if let gradient = CGGradient(colorsSpace: colorSpace, colors: bgColors, locations: [0.0, 1.0]) {
+              ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 1024), end: CGPoint(x: 1024, y: 0), options: [])
+          }
+
+          // HomeCourt-style Neon AR Tracking Arc
+          ctx.setStrokeColor(CGColor(red: 0.0, green: 0.92, blue: 1.0, alpha: 0.9))
+          ctx.setLineWidth(30)
+          ctx.strokeEllipse(in: CGRect(x: 110, y: 110, width: 804, height: 804))
+
+          // Basketball Core
+          let ballRect = CGRect(x: 220, y: 220, width: 584, height: 584)
+          let ballColors = [
+              CGColor(red: 1.0, green: 0.52, blue: 0.08, alpha: 1.0),
+              CGColor(red: 0.85, green: 0.26, blue: 0.02, alpha: 1.0)
+          ] as CFArray
+          ctx.saveGState()
+          ctx.addEllipse(in: ballRect)
+          ctx.clip()
+          if let ballGrad = CGGradient(colorsSpace: colorSpace, colors: ballColors, locations: [0.0, 1.0]) {
+              ctx.drawRadialGradient(ballGrad, startCenter: CGPoint(x: 420, y: 620), startRadius: 40, endCenter: CGPoint(x: 512, y: 512), endRadius: 330, options: [])
+          }
+          ctx.setStrokeColor(CGColor(red: 0.08, green: 0.09, blue: 0.12, alpha: 0.92))
+          ctx.setLineWidth(18)
+          ctx.move(to: CGPoint(x: 220, y: 512))
+          ctx.addLine(to: CGPoint(x: 804, y: 512))
+          ctx.move(to: CGPoint(x: 512, y: 220))
+          ctx.addLine(to: CGPoint(x: 512, y: 804))
+          ctx.strokePath()
+          ctx.strokeEllipse(in: CGRect(x: 90, y: 312, width: 350, height: 400))
+          ctx.strokeEllipse(in: CGRect(x: 584, y: 312, width: 350, height: 400))
+          ctx.restoreGState()
+
+          image.unlockFocus()
+
+          if let tiffData = image.tiffRepresentation,
+             let bitmap = NSBitmapImageRep(data: tiffData),
+             let pngData = bitmap.representation(using: .png, properties: [:]) {
+              try? pngData.write(to: URL(fileURLWithPath: "HoopFlashPro/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"))
+          }
+          EOF
+          swift generate_icon.swift
+          rm -f generate_icon.swift
+
+          cat << 'EOF' > HoopFlashPro/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json
+          {
+            "images" : [
+              {
+                "filename" : "AppIcon.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          EOF
+
+          cat << 'EOF' > HoopFlashPro/Resources/Assets.xcassets/Contents.json
+          {
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          EOF
+
+          # 3. Generate Models/DrillModels.swift
+          cat << 'EOF' > HoopFlashPro/Sources/Models/DrillModels.swift
+          import Foundation
+          import SwiftUI
+
+          enum DrillMode: String, CaseIterable, Identifiable, Codable {
+              case ballHandlingStrike = "AR 运球护球手闪电触靶"
+              case agilityLateralShuttle = "AR 边线折返与飞跃虚拟栏"
+              case closeoutReadReact = "AR 扑防干扰与假动作识别"
+              case courtPodReflex = "3x3 战术灯光矩阵 (免相机)"
+              case dribbleRhythm = "高频碎步节拍与抬头视野"
+
+              var id: String { rawValue }
+
+              var badgeTag: String {
+                  switch self {
+                  case .ballHandlingStrike: return "HomeCourt 经典控球"
+                  case .agilityLateralShuttle: return "HomeCourt 横移爆发"
+                  case .closeoutReadReact: return "防守阅读 & 神经抑制"
+                  case .courtPodReflex: return "桌面/地面触控模式"
+                  case .dribbleRhythm: return "步频 & 抬头观察"
+                  }
+              }
+
+              var subtitle: String {
+                  switch self {
+                  case .ballHandlingStrike:
+                      return "一手原地运球，另一只手（护球手）凌空击碎屏幕四周随机刷新的 AR 悬浮靶标"
+                  case .agilityLateralShuttle:
+                      return "压低防守重心左右滑步触碰 AR 边线翼标，遇到黄色虚拟跨栏迅速起跳或下潜躲避"
+                  case .closeoutReadReact:
+                      return "根据颜色信号极速响应：绿靶单手封盖、蓝靶双手干扰、红靶假动作陷阱严禁触碰"
+                  case .courtPodReflex:
+                      return "无需摄像头支架，将手机平放地面或桌面，用双手直接拍击 9 宫格球场战术反应灯"
+                  case .dribbleRhythm:
+                      return "60-200 BPM 动态步频加速，边做碎步运球边抬头看清并点击屏幕闪现的教练手势数字"
+                  }
+              }
+
+              var iconName: String {
+                  switch self {
+                  case .ballHandlingStrike: return "hand.Wave.fill"
+                  case .agilityLateralShuttle: return "figure.run"
+                  case .closeoutReadReact: return "bolt.shield.fill"
+                  case .courtPodReflex: return "square.grid.3x3.fill"
+                  case .dribbleRhythm: return "metronome.fill"
+                  }
+              }
+
+              var usesARCamera: Bool {
+                  switch self {
+                  case .ballHandlingStrike, .agilityLateralShuttle, .closeoutReadReact:
+                      return true
+                  case .courtPodReflex, .dribbleRhythm:
+                      return false
+                  }
+              }
+
+              var themeColor: Color {
+                  switch self {
+                  case .ballHandlingStrike: return Color(red: 1.0, green: 0.48, blue: 0.12)
+                  case .agilityLateralShuttle: return Color(red: 0.0, green: 0.85, blue: 0.96)
+                  case .closeoutReadReact: return Color(red: 0.22, green: 0.92, blue: 0.52)
+                  case .courtPodReflex: return Color(red: 0.98, green: 0.76, blue: 0.18)
+                  case .dribbleRhythm: return Color(red: 0.72, green: 0.42, blue: 1.0)
+                  }
+              }
+
+              var setupInstruction: String {
+                  switch self {
+                  case .ballHandlingStrike:
+                      return "手机靠墙或放支架，后退 1.8 米入镜，举手触碰绿圈即可无接触开局"
+                  case .agilityLateralShuttle:
+                      return "手机竖放地面或桌面，保持屈膝低重心滑步，用双肩/双手撞击左右边线靶"
+                  case .closeoutReadReact:
+                      return "绿色单手扑防、蓝色双手高举同时触碰、红色假动作陷阱保持静止不碰"
+                  case .courtPodReflex:
+                      return "手机平放身前，绿灯单点、橙灯双击、红灯进攻犯规陷阱不碰"
+                  case .dribbleRhythm:
+                      return "跟随节拍声高频碎步，眼睛盯住屏幕中央手势数字并点击对应按钮"
+                  }
+              }
+          }
+
+          enum DifficultyTier: String, CaseIterable, Identifiable, Codable {
+              case rookie = "新秀 U10"
+              case allStar = "全明星 U13"
+              case mvp = "职业 MVP"
+
+              var id: String { rawValue }
+
+              var targetTimeoutMs: Double {
+                  switch self {
+                  case .rookie: return 2300
+                  case .allStar: return 1600
+                  case .mvp: return 1100
+                  }
+              }
+
+              var fakeBombProbability: Double {
+                  switch self {
+                  case .rookie: return 0.14
+                  case .allStar: return 0.24
+                  case .mvp: return 0.34
+                  }
+              }
+
+              var baseBPM: Int {
+                  switch self {
+                  case .rookie: return 105
+                  case .allStar: return 138
+                  case .mvp: return 168
+                  }
+              }
+          }
+
+          struct SplitReactionSample: Codable, Identifiable {
+              var id = UUID()
+              let index: Int
+              let reactionMs: Int
+              let isLeftHandOrSide: Bool
+              let wasHit: Bool
+          }
+
+          struct TrainingRecord: Identifiable, Codable {
+              let id: UUID
+              let date: Date
+              let mode: DrillMode
+              let difficulty: DifficultyTier
+              let score: Int
+              let hits: Int
+              let misses: Int
+              let avgReactionMs: Int
+              let bestReactionMs: Int
+              let leftAvgMs: Int
+              let rightAvgMs: Int
+              let maxCombo: Int
+              let durationSeconds: Int
+              let samples: [SplitReactionSample]
+
+              var accuracyPercent: Int {
+                  let total = hits + misses
+                  guard total > 0 else { return 100 }
+                  return Int((Double(hits) / Double(total)) * 100.0)
+              }
+
+              var agilityRating: String {
+                  if avgReactionMs <= 0 { return "A 控球大师" }
+                  if avgReactionMs < 380 && accuracyPercent >= 88 { return "SSS 闪电侠" }
+                  if avgReactionMs < 480 && accuracyPercent >= 82 { return "SS 全明星后卫" }
+                  if avgReactionMs < 620 && accuracyPercent >= 75 { return "S 精英先发" }
+                  if avgReactionMs < 820 { return "A 潜力新星" }
+                  return "B 扎实成长"
+              }
+          }
+
+          struct AchievementBadge: Identifiable {
+              let id: String
+              let title: String
+              let description: String
+              let icon: String
+              let isUnlocked: Bool
+              let accent: Color
+          }
+
+          @MainActor
+          final class TrainingStore: ObservableObject {
+              @Published var records: [TrainingRecord] = []
+              @Published var playerName: String = "篮球小飞侠"
+              @Published var voiceCoachEnabled: Bool = true
+              @Published var soundEffectsEnabled: Bool = true
+
+              private let storageKey = "hoopflash.training.records.v2"
+
+              init() {
+                  load()
+              }
+
+              func addRecord(_ record: TrainingRecord) {
+                  records.insert(record, at: 0)
+                  if records.count > 80 {
+                      records = Array(records.prefix(80))
+                  }
+                  save()
+              }
+
+              func clearRecords() {
+                  records.removeAll()
+                  save()
+              }
+
+              var totalSessions: Int { records.count }
+              var totalHits: Int { records.reduce(0) { $0 + $1.hits } }
+
+              var bestReactionEverMs: Int {
+                  let valid = records.map { $0.bestReactionMs }.filter { $0 > 0 }
+                  return valid.min() ?? 0
+              }
+
+              var averageReactionRecentMs: Int {
+                  let recent = records.prefix(10).map { $0.avgReactionMs }.filter { $0 > 0 }
+                  guard !recent.isEmpty else { return 0 }
+                  return recent.reduce(0, +) / recent.count
+              }
+
+              var xpLevel: Int {
+                  max(1, (totalHits / 25) + 1)
+              }
+
+              var xpProgress: Double {
+                  Double(totalHits % 25) / 25.0
+              }
+
+              var badges: [AchievementBadge] {
+                  [
+                      AchievementBadge(
+                          id: "first_step",
+                          title: "HomeCourt 破冰首训",
+                          description: "完成首场 AR 视觉或敏捷反应特训",
+                          icon: "flame.fill",
+                          isUnlocked: totalSessions >= 1,
+                          accent: .orange
+                      ),
+                      AchievementBadge(
+                          id: "sub_350",
+                          title: "0.35秒超神神经反射",
+                          description: "单次最快触靶反应突破 350ms 以内",
+                          icon: "bolt.circle.fill",
+                          isUnlocked: bestReactionEverMs > 0 && bestReactionEverMs <= 350,
+                          accent: .yellow
+                      ),
+                      AchievementBadge(
+                          id: "combo_15",
+                          title: "脚踝终结者 15连击",
+                          description: "单局连续 15 次零失误极速命中靶标",
+                          icon: "crown.fill",
+                          isUnlocked: records.contains(where: { $0.maxCombo >= 15 }),
+                          accent: .cyan
+                      ),
+                      AchievementBadge(
+                          id: "ambidextrous",
+                          title: "左右开弓均衡大师",
+                          description: "单局左右手平均反应差距小于 45ms",
+                          icon: "hands.sparkles.fill",
+                          isUnlocked: records.contains(where: { $0.leftAvgMs > 0 && $0.rightAvgMs > 0 && abs($0.leftAvgMs - $0.rightAvgMs) <= 45 }),
+                          accent: .green
+                      ),
+                      AchievementBadge(
+                          id: "hundred_club",
+                          title: "百次触靶里程碑",
+                          description: "累计完成 100 次高速篮球敏捷反应触碰",
+                          icon: "medal.fill",
+                          isUnlocked: totalHits >= 100,
+                          accent: .purple
+                      )
+                  ]
+              }
+
+              func save() {
+                  if let encoded = try? JSONEncoder().encode(records) {
+                      UserDefaults.standard.set(encoded, forKey: storageKey)
+                  }
+              }
+
+              private func load() {
+                  guard let data = UserDefaults.standard.data(forKey: storageKey),
+                        let decoded = try? JSONDecoder().decode([TrainingRecord].self, from: data) else {
+                      return
+                  }
+                  records = decoded
+              }
+          }
+          EOF
+
+          # 4. Generate Services/SoundAndSpeechService.swift (Crash-Safe Audio Synthesis & Speech)
+          cat << 'EOF' > HoopFlashPro/Sources/Services/SoundAndSpeechService.swift
+          import Foundation
+          import AVFoundation
+          import AudioToolbox
+          import UIKit
+
+          final class SoundAndSpeechService {
+              static let shared = SoundAndSpeechService()
+
+              private let synthesizer = AVSpeechSynthesizer()
+              private let audioQueue = DispatchQueue(label: "com.hoopflash.audio.serialQueue", qos: .userInitiated)
+              private var audioEngine: AVAudioEngine?
+              private var playerNode: AVAudioPlayerNode?
+              private var mixerFormat: AVAudioFormat?
+
+              private init() {
+                  audioQueue.async { [weak self] in
+                      self?.setupEngineSafely()
+                  }
+              }
+
+              private func setupEngineSafely() {
+                  do {
+                      let session = AVAudioSession.sharedInstance()
+                      try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+                      try session.setActive(true)
+
+                      let engine = AVAudioEngine()
+                      let node = AVAudioPlayerNode()
+                      engine.attach(node)
+
+                      // Critical crash fix: Always match mainMixerNode's native hardware channel & sample rate format
+                      let hardwareFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+                      if hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 {
+                          engine.connect(node, to: engine.mainMixerNode, format: hardwareFormat)
+                          try engine.start()
+                          self.audioEngine = engine
+                          self.playerNode = node
+                          self.mixerFormat = hardwareFormat
+                      }
+                  } catch {
+                      print("Safe audio fallback to system sounds: \(error)")
+                  }
+              }
+
+              func playTone(frequency: Double, durationMs: Double, volume: Float = 0.40, isSquare: Bool = false) {
+                  audioQueue.async { [weak self] in
+                      guard let self = self else { return }
+                      guard let engine = self.audioEngine,
+                            let node = self.playerNode,
+                            let format = self.mixerFormat else {
+                          AudioServicesPlaySystemSound(1104)
+                          return
+                      }
+
+                      if !engine.isRunning {
+                          do {
+                              try engine.start()
+                          } catch {
+                              AudioServicesPlaySystemSound(1104)
+                              return
+                          }
+                      }
+
+                      let sampleRate = format.sampleRate
+                      let channels = Int(format.channelCount)
+                      let frameCount = AVAudioFrameCount(max(1, Int((durationMs / 1000.0) * sampleRate)))
+                      guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+                      buffer.frameLength = frameCount
+
+                      guard let floatChannels = buffer.floatChannelData else { return }
+                      for i in 0..<Int(frameCount) {
+                          let t = Double(i) / sampleRate
+                          let attack = min(1.0, Double(i) / (sampleRate * 0.005))
+                          let decay = max(0.0, 1.0 - (Double(i) / Double(frameCount)))
+                          let env = Float(attack * decay)
+                          let raw = sin(2.0 * .pi * frequency * t)
+                          let val: Float = (isSquare ? (raw >= 0 ? 0.8 : -0.8) : Float(raw)) * volume * env
+                          for ch in 0..<channels {
+                              floatChannels[ch][i] = val
+                          }
+                      }
+
+                      node.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+                      if !node.isPlaying {
+                          node.play()
+                      }
+                  }
+              }
+
+              func playHitSound(combo: Int) {
+                  let freq = min(1480.0, 620.0 + Double(combo * 38))
+                  playTone(frequency: freq, durationMs: 75, volume: 0.45)
+                  DispatchQueue.main.async {
+                      let generator = UIImpactFeedbackGenerator(style: .rigid)
+                      generator.impactOccurred()
+                  }
+              }
+
+              func playDoubleHitSound() {
+                  playTone(frequency: 880.0, durationMs: 65, volume: 0.45)
+                  DispatchQueue.main.async {
+                      let generator = UIImpactFeedbackGenerator(style: .heavy)
+                      generator.impactOccurred()
+                  }
+              }
+
+              func playMissOrBombSound() {
+                  playTone(frequency: 150.0, durationMs: 210, volume: 0.55, isSquare: true)
+                  DispatchQueue.main.async {
+                      let generator = UINotificationFeedbackGenerator()
+                      generator.notificationOccurred(.error)
+                  }
+              }
+
+              func playMetronomeTick(isAccent: Bool) {
+                  let freq = isAccent ? 987.77 : 659.25
+                  playTone(frequency: freq, durationMs: 38, volume: isAccent ? 0.50 : 0.32)
+              }
+
+              func speakCoach(_ phrase: String, rate: Float = 0.55) {
+                  DispatchQueue.main.async { [weak self] in
+                      guard let self = self else { return }
+                      if self.synthesizer.isSpeaking {
+                          self.synthesizer.stopSpeaking(at: .immediate)
+                      }
+                      let utterance = AVSpeechUtterance(string: phrase)
+                      utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+                      utterance.rate = rate
+                      utterance.pitchMultiplier = 1.05
+                      utterance.volume = 0.95
+                      self.synthesizer.speak(utterance)
+                  }
+              }
+
+              func stopSpeech() {
+                  DispatchQueue.main.async { [weak self] in
+                      guard let self = self else { return }
+                      if self.synthesizer.isSpeaking {
+                          self.synthesizer.stopSpeaking(at: .immediate)
+                      }
+                  }
+              }
+          }
+          EOF
+
+          # 5. Generate Services/VisionPoseService.swift (Crash-Safe Single-Flight Frame Throttle + EMA Smoothing)
+          cat << 'EOF' > HoopFlashPro/Sources/Services/VisionPoseService.swift
+          import Foundation
+          import AVFoundation
+          import Vision
+          import CoreGraphics
+          import UIKit
+          import SwiftUI
+
+          struct DetectedBodyJoints {
+              var leftWrist: CGPoint?
+              var rightWrist: CGPoint?
+              var leftElbow: CGPoint?
+              var rightElbow: CGPoint?
+              var nose: CGPoint?
+              var leftShoulder: CGPoint?
+              var rightShoulder: CGPoint?
+              var rootHip: CGPoint?
+              var leftKnee: CGPoint?
+              var rightKnee: CGPoint?
+              var leftAnkle: CGPoint?
+              var rightAnkle: CGPoint?
+
+              var hasVisibleUpperBody: Bool {
+                  (nose != nil) && (leftShoulder != nil || rightShoulder != nil) && (leftWrist != nil || rightWrist != nil)
+              }
+
+              var bodyCenterX: CGFloat? {
+                  if let ls = leftShoulder, let rs = rightShoulder {
+                      return (ls.x + rs.x) * 0.5
+                  }
+                  if let hip = rootHip {
+                      return hip.x
+                  }
+                  return nose?.x
+              }
+
+              var stanceLowScore: CGFloat {
+                  guard let nosePt = nose else { return 0.5 }
+                  return max(0.0, min(1.0, (nosePt.y - 0.20) / 0.36))
+              }
+
+              var isStanceLowEnough: Bool {
+                  stanceLowScore >= 0.28
+              }
+
+              /// Estimated hand palm centers extending 28% beyond wrist from elbow (HomeCourt style hand-strike reach)
+              var leftPalmCenter: CGPoint? {
+                  guard let w = leftWrist else { return nil }
+                  if let e = leftElbow {
+                      let vx = w.x - e.x
+                      let vy = w.y - e.y
+                      return CGPoint(
+                          x: max(0.02, min(0.98, w.x + vx * 0.28)),
+                          y: max(0.02, min(0.98, w.y + vy * 0.28))
+                      )
+                  }
+                  return w
+              }
+
+              var rightPalmCenter: CGPoint? {
+                  guard let w = rightWrist else { return nil }
+                  if let e = rightElbow {
+                      let vx = w.x - e.x
+                      let vy = w.y - e.y
+                      return CGPoint(
+                          x: max(0.02, min(0.98, w.x + vx * 0.28)),
+                          y: max(0.02, min(0.98, w.y + vy * 0.28))
+                      )
+                  }
+                  return w
+              }
+          }
+
+          final class VisionPoseService: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+              @Published var joints = DetectedBodyJoints()
+              @Published var leftHandTrail: [CGPoint] = []
+              @Published var rightHandTrail: [CGPoint] = []
+              @Published var isCameraAuthorized: Bool = false
+              @Published var cameraErrorMessage: String? = nil
+
+              let captureSession = AVCaptureSession()
+              private let sessionQueue = DispatchQueue(label: "com.hoopflash.camera.sessionQueue", qos: .userInitiated)
+              private let visionQueue = DispatchQueue(label: "com.hoopflash.camera.visionQueue", qos: .userInteractive)
+
+              // Single reusable Vision request & thread-safe frame gate to prevent ANE/Vision buffer exhaustion crash
+              private let poseRequest = VNDetectHumanBodyPoseRequest()
+              private let frameGateLock = NSLock()
+              private var isProcessingFrame: Bool = false
+              private var lastProcessedTimestamp: CFTimeInterval = 0
+              private var isConfigured: Bool = false
+              private var smoothedJoints = DetectedBodyJoints()
+
+              func requestPermissionAndStart() {
+                  let status = AVCaptureDevice.authorizationStatus(for: .video)
+                  switch status {
+                  case .authorized:
+                      DispatchQueue.main.async {
+                          self.isCameraAuthorized = true
+                          self.cameraErrorMessage = nil
+                      }
+                      startSession()
+                  case .notDetermined:
+                      AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                          guard let self = self else { return }
+                          DispatchQueue.main.async {
+                              self.isCameraAuthorized = granted
+                              if !granted {
+                                  self.cameraErrorMessage = "未开启相机权限：已自动启用【触屏点按靶标】兼容模式"
+                              }
+                          }
+                          if granted {
+                              self.startSession()
+                          }
+                      }
+                  default:
+                      DispatchQueue.main.async {
+                          self.isCameraAuthorized = false
+                          self.cameraErrorMessage = "相机权限未开启：当前支持直接点击屏幕靶标训练"
+                      }
+                  }
+              }
+
+              func startSession() {
+                  sessionQueue.async { [weak self] in
+                      guard let self = self else { return }
+                      if !self.isConfigured {
+                          self.configureSessionLocked()
+                      }
+                      if self.isConfigured && !self.captureSession.isRunning {
+                          self.captureSession.startRunning()
+                      }
+                  }
+              }
+
+              func stopSession() {
+                  sessionQueue.async { [weak self] in
+                      guard let self = self else { return }
+                      if self.captureSession.isRunning {
+                          self.captureSession.stopRunning()
+                      }
+                  }
+              }
+
+              private func configureSessionLocked() {
+                  captureSession.beginConfiguration()
+                  if captureSession.canSetSessionPreset(.hd1280x720) {
+                      captureSession.sessionPreset = .hd1280x720
+                  } else {
+                      captureSession.sessionPreset = .vga640x480
+                  }
+
+                  guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+                        let input = try? AVCaptureDeviceInput(device: device),
+                        captureSession.canAddInput(input) else {
+                      captureSession.commitConfiguration()
+                      DispatchQueue.main.async {
+                          self.cameraErrorMessage = "未检测到前置相机，已启用触屏交互模式"
+                      }
+                      return
+                  }
+                  captureSession.addInput(input)
+
+                  let output = AVCaptureVideoDataOutput()
+                  output.alwaysDiscardsLateVideoFrames = true
+                  output.videoSettings = [
+                      kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+                  ]
+                  output.setSampleBufferDelegate(self, queue: visionQueue)
+
+                  if captureSession.canAddOutput(output) {
+                      captureSession.addOutput(output)
+                      if let conn = output.connection(with: .video) {
+                          if conn.isVideoOrientationSupported {
+                              conn.videoOrientation = .portrait
+                          }
+                          if conn.isVideoMirroringSupported {
+                              conn.isVideoMirrored = true
+                          }
+                      }
+                      isConfigured = true
+                  }
+                  captureSession.commitConfiguration()
+              }
+
+              func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+                  let now = CACurrentMediaTime()
+                  frameGateLock.lock()
+                  // Cap Vision pose inference to ~25 FPS and strictly drop overlapping frames
+                  if isProcessingFrame || (now - lastProcessedTimestamp < 0.038) {
+                      frameGateLock.unlock()
+                      return
+                  }
+                  isProcessingFrame = true
+                  lastProcessedTimestamp = now
+                  frameGateLock.unlock()
+
+                  defer {
+                      frameGateLock.lock()
+                      isProcessingFrame = false
+                      frameGateLock.unlock()
+                  }
+
+                  guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+                  let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+                  do {
+                      try handler.perform([poseRequest])
+                      guard let observation = poseRequest.results?.first else { return }
+                      let raw = extractJoints(from: observation)
+                      let smoothed = blendJoints(previous: smoothedJoints, current: raw, alpha: 0.62)
+                      smoothedJoints = smoothed
+
+                      DispatchQueue.main.async { [weak self] in
+                          guard let self = self else { return }
+                          self.joints = smoothed
+                          if let lp = smoothed.leftPalmCenter {
+                              self.leftHandTrail.append(lp)
+                              if self.leftHandTrail.count > 8 { self.leftHandTrail.removeFirst() }
+                          }
+                          if let rp = smoothed.rightPalmCenter {
+                              self.rightHandTrail.append(rp)
+                              if self.rightHandTrail.count > 8 { self.rightHandTrail.removeFirst() }
+                          }
+                      }
+                  } catch {
+                      // Safely ignore transient Vision frame error
+                  }
+              }
+
+              private func extractJoints(from obs: VNHumanBodyPoseObservation) -> DetectedBodyJoints {
+                  var res = DetectedBodyJoints()
+                  guard let pts = try? obs.recognizedPoints(.all) else { return res }
+
+                  func pt(_ key: VNHumanBodyPoseObservation.JointName, minConf: Float = 0.22) -> CGPoint? {
+                      guard let p = pts[key], p.confidence >= minConf,
+                            !p.location.x.isNaN, !p.location.y.isNaN else { return nil }
+                      return CGPoint(x: CGFloat(p.location.x), y: CGFloat(1.0 - p.location.y))
+                  }
+
+                  res.leftWrist = pt(.leftWrist)
+                  res.rightWrist = pt(.rightWrist)
+                  res.leftElbow = pt(.leftElbow)
+                  res.rightElbow = pt(.rightElbow)
+                  res.nose = pt(.nose)
+                  res.leftShoulder = pt(.leftShoulder)
+                  res.rightShoulder = pt(.rightShoulder)
+                  res.rootHip = pt(.root)
+                  res.leftKnee = pt(.leftKnee)
+                  res.rightKnee = pt(.rightKnee)
+                  res.leftAnkle = pt(.leftAnkle)
+                  res.rightAnkle = pt(.rightAnkle)
+                  return res
+              }
+
+              private func blendPoint(_ oldPt: CGPoint?, _ newPt: CGPoint?, alpha: CGFloat) -> CGPoint? {
+                  guard let n = newPt else { return nil }
+                  guard let o = oldPt else { return n }
+                  return CGPoint(
+                      x: o.x * (1.0 - alpha) + n.x * alpha,
+                      y: o.y * (1.0 - alpha) + n.y * alpha
+                  )
+              }
+
+              private func blendJoints(previous: DetectedBodyJoints, current: DetectedBodyJoints, alpha: CGFloat) -> DetectedBodyJoints {
+                  var out = DetectedBodyJoints()
+                  out.leftWrist = blendPoint(previous.leftWrist, current.leftWrist, alpha: alpha)
+                  out.rightWrist = blendPoint(previous.rightWrist, current.rightWrist, alpha: alpha)
+                  out.leftElbow = blendPoint(previous.leftElbow, current.leftElbow, alpha: alpha)
+                  out.rightElbow = blendPoint(previous.rightElbow, current.rightElbow, alpha: alpha)
+                  out.nose = blendPoint(previous.nose, current.nose, alpha: alpha)
+                  out.leftShoulder = blendPoint(previous.leftShoulder, current.leftShoulder, alpha: alpha)
+                  out.rightShoulder = blendPoint(previous.rightShoulder, current.rightShoulder, alpha: alpha)
+                  out.rootHip = blendPoint(previous.rootHip, current.rootHip, alpha: alpha)
+                  out.leftKnee = blendPoint(previous.leftKnee, current.leftKnee, alpha: alpha)
+                  out.rightKnee = blendPoint(previous.rightKnee, current.rightKnee, alpha: alpha)
+                  out.leftAnkle = blendPoint(previous.leftAnkle, current.leftAnkle, alpha: alpha)
+                  out.rightAnkle = blendPoint(previous.rightAnkle, current.rightAnkle, alpha: alpha)
+                  return out
+              }
+          }
+
+          struct CameraPreviewLayerView: UIViewRepresentable {
+              let session: AVCaptureSession
+
+              func makeUIView(context: Context) -> PreviewUIView {
+                  let view = PreviewUIView()
+                  view.backgroundColor = .black
+                  view.videoPreviewLayer.session = session
+                  view.videoPreviewLayer.videoGravity = .resizeAspectFill
+                  return view
+              }
+
+              func updateUIView(_ uiView: PreviewUIView, context: Context) {
+                  if uiView.videoPreviewLayer.session !== session {
+                      uiView.videoPreviewLayer.session = session
+                  }
+              }
+
+              final class PreviewUIView: UIView {
+                  override class var layerClass: AnyClass {
+                      AVCaptureVideoPreviewLayer.self
+                  }
+                  var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+                      layer as! AVCaptureVideoPreviewLayer
+                  }
+              }
+          }
+          EOF
+
+          # 6. Generate Views/VisionDrillView.swift (HomeCourt-Style AR Calibration + 3 Distinct AR Drills + Particle Shatter)
+          cat << 'EOF' > HoopFlashPro/Sources/Views/VisionDrillView.swift
+          import SwiftUI
+
+          enum ARWorkoutPhase {
+              case calibrating   // HomeCourt step-back body framing + touch green start node
+              case countdown     // 3 - 2 - 1 - GO
+              case activePlay    // Main AR interactive game
+          }
+
+          enum ARTargetKind {
+              case singleHandStrike  // Orange/Cyan target: touch with either hand/palm
+              case doubleHandBlock   // Blue target: raise both hands or touch quickly
+              case lateralWingCone   // Wing shuttle target
+              case overheadHurdle    // Yellow bar: duck below it!
+              case fakeOutBomb       // Red decoy: DO NOT touch!
+          }
+
+          struct ARVirtualTarget: Identifiable {
+              let id = UUID()
+              let position: CGPoint        // Normalized 0...1
+              let secondaryPosition: CGPoint? // Used for dual-hand block
+              let label: String
+              let subtitle: String
+              let kind: ARTargetKind
+              let spawnedAt: Date
+              let isLeftSide: Bool
+          }
+
+          struct HitBurstEffect: Identifiable {
+              let id = UUID()
+              let normalizedPoint: CGPoint
+              let text: String
+              let color: Color
+              let createdAt: Date
+          }
+
+          struct VisionDrillView: View {
+              let mode: DrillMode
+              let difficulty: DifficultyTier
+              @ObservedObject var store: TrainingStore
+              let onFinish: (TrainingRecord) -> Void
+              let onCancel: () -> Void
+
+              @StateObject private var visionService = VisionPoseService()
+              @State private var phase: ARWorkoutPhase = .calibrating
+              @State private var calibrationHoldProgress: Double = 0.0
+              @State private var countdownValue: Int = 3
+
+              @State private var remainingSeconds: Int = 45
+              @State private var score: Int = 0
+              @State private var hits: Int = 0
+              @State private var misses: Int = 0
+              @State private var combo: Int = 0
+              @State private var maxCombo: Int = 0
+              @State private var samples: [SplitReactionSample] = []
+
+              @State private var currentTarget: ARVirtualTarget? = nil
+              @State private var nextShuttleLeft: Bool = true
+              @State private var statusBanner: String = "请退后 1.8 米站在校准框内，举手触碰绿圈开局"
+              @State private var hitBursts: [HitBurstEffect] = []
+              @State private var isFinished: Bool = false
+
+              private let startCircleNormalized = CGPoint(x: 0.50, y: 0.25)
+              private let secondTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+              private let physicsTimer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
+
+              private let ballHandlingSpots: [(CGPoint, String, Bool)] = [
+                  (CGPoint(x: 0.20, y: 0.28), "左上高位护球靶", true),
+                  (CGPoint(x: 0.80, y: 0.28), "右上高位护球靶", false),
+                  (CGPoint(x: 0.18, y: 0.52), "左侧腰位变向靶", true),
+                  (CGPoint(x: 0.82, y: 0.52), "右侧腰位变向靶", false),
+                  (CGPoint(x: 0.22, y: 0.72), "左下低位压球靶", true),
+                  (CGPoint(x: 0.78, y: 0.72), "右下低位压球靶", false),
+                  (CGPoint(x: 0.50, y: 0.22), "弧顶抬头视野靶", true)
+              ]
+
+              var body: some View {
+                  GeometryReader { geo in
+                      ZStack {
+                          // 1. Live Front Camera or Tactical Court Surface
+                          if visionService.isCameraAuthorized {
+                              CameraPreviewLayerView(session: visionService.captureSession)
+                                  .ignoresSafeArea()
+                                  .overlay(Color.black.opacity(0.22))
+                          } else {
+                              LinearGradient(
+                                  colors: [Color(red: 0.04, green: 0.07, blue: 0.13), Color(red: 0.08, green: 0.14, blue: 0.24)],
+                                  startPoint: .top,
+                                  endPoint: .bottom
+                              )
+                              .ignoresSafeArea()
+                          }
+
+                          // 2. AR Court Floor Perspective & Neon Skeleton + Comet Trails
+                          Canvas { context, size in
+                              drawHomeCourtPerspectiveFloor(context: context, size: size)
+                              drawHandCometTrails(context: context, size: size)
+                              drawNeonBodySkeleton(context: context, size: size)
+                          }
+                          .allowsHitTesting(false)
+
+                          // 3. Phase-Specific Interactive AR Layer
+                          if phase == .calibrating {
+                              calibrationOverlay(in: geo.size)
+                          } else if phase == .countdown {
+                              countdownOverlay
+                          } else if phase == .activePlay {
+                              activePlayTargetsLayer(in: geo.size)
+                          }
+
+                          // 4. Floating Hit Popups (+120ms / PERFECT!)
+                          ForEach(hitBursts) { burst in
+                              Text(burst.text)
+                                  .font(.system(size: 20, weight: .black, design: .rounded))
+                                  .foregroundColor(burst.color)
+                                  .padding(.horizontal, 10)
+                                  .padding(.vertical, 4)
+                                  .background(Color.black.opacity(0.65))
+                                  .clipShape(Capsule())
+                                  .position(
+                                      x: burst.normalizedPoint.x * geo.size.width,
+                                      y: burst.normalizedPoint.y * geo.size.height
+                                  )
+                          }
+
+                          // 5. Top HomeCourt Broadcast HUD Bar
+                          VStack(spacing: 8) {
+                              topBroadcastHUD
+                              if mode == .agilityLateralShuttle && phase == .activePlay {
+                                  stanceCoachingBar
+                              }
+                              Spacer()
+                              if let camErr = visionService.cameraErrorMessage {
+                                  Text(camErr)
+                                      .font(.system(size: 12, weight: .semibold))
+                                      .foregroundColor(.white)
+                                      .padding(.horizontal, 14)
+                                      .padding(.vertical, 8)
+                                      .background(Color.black.opacity(0.75))
+                                      .clipShape(Capsule())
+                                      .padding(.bottom, 12)
+                              }
+                          }
+                          .padding(.horizontal, 14)
+                          .padding(.top, 8)
+                      }
+                      .onAppear {
+                          visionService.requestPermissionAndStart()
+                          if store.voiceCoachEnabled {
+                              SoundAndSpeechService.shared.speakCoach("请后退站在校准框内，举手触碰上方绿色光圈开始特训", rate: 0.54)
+                          }
+                      }
+                      .onDisappear {
+                          visionService.stopSession()
+                          SoundAndSpeechService.shared.stopSpeech()
+                      }
+                      .onReceive(secondTimer) { _ in
+                          guard !isFinished else { return }
+                          handleOneSecondTick()
+                      }
+                      .onReceive(physicsTimer) { _ in
+                          guard !isFinished else { return }
+                          handlePhysicsAndCollisionTick()
+                      }
+                  }
+              }
+
+              // MARK: - Top Broadcast HUD
+              private var topBroadcastHUD: some View {
+                  HStack(spacing: 10) {
+                      Button {
+                          isFinished = true
+                          visionService.stopSession()
+                          SoundAndSpeechService.shared.stopSpeech()
+                          onCancel()
+                      } label: {
+                          Image(systemName: "xmark")
+                              .font(.system(size: 16, weight: .black))
+                              .foregroundColor(.white)
+                              .frame(width: 36, height: 36)
+                              .background(Color.white.opacity(0.18))
+                              .clipShape(Circle())
+                      }
+
+                      VStack(alignment: .leading, spacing: 2) {
+                          Text(mode.rawValue)
+                              .font(.system(size: 14, weight: .black))
+                              .foregroundColor(.white)
+                              .lineLimit(1)
+                          Text(statusBanner)
+                              .font(.system(size: 11, weight: .bold))
+                              .foregroundColor(.yellow)
+                              .lineLimit(1)
+                      }
+
+                      Spacer(minLength: 4)
+
+                      HStack(spacing: 10) {
+                          hudPill(label: "TIME", value: "\(remainingSeconds)s", color: remainingSeconds <= 10 ? .red : .cyan)
+                          hudPill(label: "COMBO", value: "x\(combo)", color: .orange)
+                          hudPill(label: "SCORE", value: "\(score)", color: .green)
+                      }
+                  }
+                  .padding(.horizontal, 12)
+                  .padding(.vertical, 8)
+                  .background(.ultraThinMaterial)
+                  .background(Color.black.opacity(0.55))
+                  .clipShape(RoundedRectangle(cornerRadius: 16))
+              }
+
+              private func hudPill(label: String, value: String, color: Color) -> some View {
+                  VStack(spacing: 1) {
+                      Text(label)
+                          .font(.system(size: 9, weight: .heavy))
+                          .foregroundColor(.white.opacity(0.65))
+                      Text(value)
+                          .font(.system(size: 16, weight: .black, design: .rounded))
+                          .foregroundColor(color)
+                  }
+                  .frame(minWidth: 44)
+              }
+
+              private var stanceCoachingBar: some View {
+                  let lowEnough = visionService.joints.isStanceLowEnough
+                  return HStack(spacing: 10) {
+                      Image(systemName: lowEnough ? "checkmark.shield.fill" : "arrow.down.to.line.compact")
+                          .foregroundColor(lowEnough ? .green : .orange)
+                      Text(lowEnough ? "防守低重心姿态达标 (Athletic Stance)" : "请屈膝降低臀部重心！")
+                          .font(.system(size: 12, weight: .bold))
+                          .foregroundColor(.white)
+                      Spacer()
+                      ProgressView(value: Double(visionService.joints.stanceLowScore), total: 1.0)
+                          .progressViewStyle(LinearProgressViewStyle(tint: lowEnough ? .green : .orange))
+                          .frame(width: 90)
+                  }
+                  .padding(.horizontal, 14)
+                  .padding(.vertical, 7)
+                  .background(Color.black.opacity(0.65))
+                  .clipShape(Capsule())
+              }
+
+              // MARK: - HomeCourt Calibration Overlay
+              private func calibrationOverlay(in size: CGSize) -> some View {
+                  let startPt = CGPoint(x: startCircleNormalized.x * size.width, y: startCircleNormalized.y * size.height)
+                  let bodyDetected = visionService.joints.hasVisibleUpperBody
+
+                  return ZStack {
+                      // Player Silhouette Framing Box
+                      RoundedRectangle(cornerRadius: 28)
+                          .stroke(
+                              bodyDetected ? Color.green : Color.cyan.opacity(0.8),
+                              style: StrokeStyle(lineWidth: 3, dash: [12, 8])
+                          )
+                          .frame(width: size.width * 0.76, height: size.height * 0.64)
+                          .position(x: size.width * 0.5, y: size.height * 0.56)
+
+                      // Hands-Free Start Button Node
+                      Button {
+                          startCountdown()
+                      } label: {
+                          ZStack {
+                              Circle()
+                                  .stroke(Color.white.opacity(0.3), lineWidth: 8)
+                                  .frame(width: 118, height: 118)
+
+                              Circle()
+                                  .trim(from: 0.0, to: CGFloat(calibrationHoldProgress))
+                                  .stroke(Color.green, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                                  .frame(width: 118, height: 118)
+                                  .rotationEffect(.degrees(-90))
+
+                              Circle()
+                                  .fill(
+                                      RadialGradient(
+                                          colors: [Color.green, Color(red: 0.0, green: 0.55, blue: 0.25)],
+                                          center: .center,
+                                          startRadius: 6,
+                                          endRadius: 54
+                                      )
+                                  )
+                                  .frame(width: 100, height: 100)
+                                  .shadow(color: .green, radius: 18)
+
+                              VStack(spacing: 4) {
+                                  Image(systemName: "hand.raised.fill")
+                                      .font(.system(size: 30, weight: .bold))
+                                      .foregroundColor(.white)
+                                  Text("举手触碰开局")
+                                      .font(.system(size: 12, weight: .heavy))
+                                      .foregroundColor(.white)
+                                  Text("(或直接点击)")
+                                      .font(.system(size: 10, weight: .semibold))
+                                      .foregroundColor(.white.opacity(0.85))
+                              }
+                          }
+                      }
+                      .position(startPt)
+
+                      // Bottom Calibration Guide Card
+                      VStack(spacing: 8) {
+                          HStack(spacing: 8) {
+                              Circle()
+                                  .fill(bodyDetected ? Color.green : Color.orange)
+                                  .frame(width: 10, height: 10)
+                              Text(bodyDetected ? "AI 已锁定球员骨骼！请举手触碰上方绿圈" : "请将手机竖放，退后 1.8~2.5 米使上半身入镜")
+                                  .font(.system(size: 14, weight: .heavy))
+                                  .foregroundColor(.white)
+                          }
+                          Text(mode.setupInstruction)
+                              .font(.system(size: 12, weight: .medium))
+                              .foregroundColor(.white.opacity(0.8))
+                              .multilineTextAlignment(.center)
+                      }
+                      .padding(.horizontal, 18)
+                      .padding(.vertical, 14)
+                      .background(Color.black.opacity(0.78))
+                      .clipShape(RoundedRectangle(cornerRadius: 18))
+                      .position(x: size.width * 0.5, y: size.height * 0.86)
+                  }
+              }
+
+              private var countdownOverlay: some View {
+                  ZStack {
+                      Color.black.opacity(0.35).ignoresSafeArea()
+                      VStack(spacing: 12) {
+                          Text("准备爆发启动")
+                              .font(.system(size: 20, weight: .heavy))
+                              .foregroundColor(.cyan)
+                          Text("\(countdownValue)")
+                              .font(.system(size: 110, weight: .black, design: .rounded))
+                              .foregroundColor(.white)
+                              .shadow(color: .orange, radius: 24)
+                      }
+                  }
+              }
+
+              // MARK: - Active AR Target Rendering
+              @ViewBuilder
+              private func activePlayTargetsLayer(in size: CGSize) -> some View {
+                  if let target = currentTarget {
+                      if target.kind == .overheadHurdle {
+                          // Horizontal laser hurdle across upper body: player must duck below it
+                          let barY = target.position.y * size.height
+                          Button {
+                              triggerTargetHit(target: target)
+                          } label: {
+                              VStack(spacing: 6) {
+                                  Text("⚡️ 极速下潜闪避高空横杆！(屈膝低头 或 点击)")
+                                      .font(.system(size: 14, weight: .black))
+                                      .foregroundColor(.black)
+                                      .padding(.horizontal, 14)
+                                      .padding(.vertical, 6)
+                                      .background(Color.yellow)
+                                      .clipShape(Capsule())
+
+                                  Rectangle()
+                                      .fill(
+                                          LinearGradient(
+                                              colors: [.yellow, .orange, .yellow],
+                                              startPoint: .leading,
+                                              endPoint: .trailing
+                                          )
+                                      )
+                                      .frame(width: size.width * 0.88, height: 18)
+                                      .clipShape(Capsule())
+                                      .shadow(color: .yellow, radius: 16)
+                              }
+                          }
+                          .position(x: size.width * 0.5, y: barY)
+                      } else {
+                          // Primary Target Node
+                          targetNodeButton(target: target, position: target.position, in: size)
+
+                          // Secondary Node for Two-Hand Closeout Block
+                          if let secPos = target.secondaryPosition {
+                              targetNodeButton(target: target, position: secPos, in: size)
+                          }
+                      }
+                  }
+              }
+
+              private func targetNodeButton(target: ARVirtualTarget, position: CGPoint, in size: CGSize) -> some View {
+                  let screenPt = CGPoint(x: position.x * size.width, y: position.y * size.height)
+                  let elapsed = Date().timeIntervalSince(target.spawnedAt) * 1000.0
+                  let remainingRatio = max(0.0, min(1.0, 1.0 - (elapsed / difficulty.targetTimeoutMs)))
+
+                  let nodeColor: Color = {
+                      switch target.kind {
+                      case .fakeOutBomb: return .red
+                      case .doubleHandBlock: return .cyan
+                      case .lateralWingCone: return Color(red: 0.0, green: 0.9, blue: 0.75)
+                      case .singleHandStrike, .overheadHurdle: return mode.themeColor
+                      }
+                  }()
+
+                  return Button {
+                      triggerTargetHit(target: target)
+                  } label: {
+                      ZStack {
+                          // Outer Countdown Ring
+                          Circle()
+                              .stroke(Color.white.opacity(0.22), lineWidth: 7)
+                              .frame(width: 118, height: 118)
+
+                          Circle()
+                              .trim(from: 0.0, to: CGFloat(remainingRatio))
+                              .stroke(nodeColor, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                              .frame(width: 118, height: 118)
+                              .rotationEffect(.degrees(-90))
+
+                          // Glowing Core Disc
+                          Circle()
+                              .fill(
+                                  RadialGradient(
+                                      colors: [nodeColor, nodeColor.opacity(0.25)],
+                                      center: .center,
+                                      startRadius: 8,
+                                      endRadius: 52
+                                  )
+                              )
+                              .frame(width: 98, height: 98)
+                              .overlay(Circle().stroke(Color.white, lineWidth: 2.5))
+                              .shadow(color: nodeColor, radius: 18)
+
+                          VStack(spacing: 3) {
+                              Image(systemName: iconForKind(target.kind))
+                                  .font(.system(size: 30, weight: .black))
+                                  .foregroundColor(.white)
+                              Text(target.label)
+                                  .font(.system(size: 12, weight: .heavy))
+                                  .foregroundColor(.white)
+                              Text(target.subtitle)
+                                  .font(.system(size: 9, weight: .bold))
+                                  .foregroundColor(.white.opacity(0.9))
+                          }
+                      }
+                  }
+                  .position(screenPt)
+              }
+
+              private func iconForKind(_ kind: ARTargetKind) -> String {
+                  switch kind {
+                  case .singleHandStrike: return "basketball.fill"
+                  case .doubleHandBlock: return "hands.clap.fill"
+                  case .lateralWingCone: return "cone.fill"
+                  case .overheadHurdle: return "arrow.down.circle.fill"
+                  case .fakeOutBomb: return "xmark.octagon.fill"
+                  }
+              }
+
+              // MARK: - Game Loop & Collision Logic
+              private func startCountdown() {
+                  guard phase == .calibrating else { return }
+                  phase = .countdown
+                  countdownValue = 3
+                  statusBanner = "3 秒倒计时准备！"
+                  if store.soundEffectsEnabled {
+                      SoundAndSpeechService.shared.playHitSound(combo: 3)
+                  }
+                  if store.voiceCoachEnabled {
+                      SoundAndSpeechService.shared.speakCoach("三，二，一，开始！", rate: 0.55)
+                  }
+              }
+
+              private func handleOneSecondTick() {
+                  // Clean up old floating bursts
+                  let now = Date()
+                  hitBursts.removeAll { now.timeIntervalSince($0.createdAt) > 0.65 }
+
+                  switch phase {
+                  case .calibrating:
+                      break
+                  case .countdown:
+                      if countdownValue > 1 {
+                          countdownValue -= 1
+                          if store.soundEffectsEnabled {
+                              SoundAndSpeechService.shared.playMetronomeTick(isAccent: false)
+                          }
+                      } else {
+                          phase = .activePlay
+                          spawnNextTarget()
+                      }
+                  case .activePlay:
+                      if remainingSeconds > 0 {
+                          remainingSeconds -= 1
+                      } else {
+                          finishWorkout()
+                      }
+                  }
+              }
+
+              private func handlePhysicsAndCollisionTick() {
+                  let handPoints = [
+                      visionService.joints.leftPalmCenter,
+                      visionService.joints.rightPalmCenter,
+                      visionService.joints.leftWrist,
+                      visionService.joints.rightWrist,
+                      visionService.joints.nose
+                  ].compactMap { $0 }
+
+                  if phase == .calibrating {
+                      // Check if player's hand touches the top green calibration node
+                      let touchedStart = handPoints.contains { pt in
+                          hypot(pt.x - startCircleNormalized.x, pt.y - startCircleNormalized.y) < 0.14
+                      }
+                      if touchedStart {
+                          calibrationHoldProgress += 0.16
+                          if calibrationHoldProgress >= 1.0 {
+                              startCountdown()
+                          }
+                      } else {
+                          calibrationHoldProgress = max(0.0, calibrationHoldProgress - 0.08)
+                      }
+                      return
+                  }
+
+                  guard phase == .activePlay, let target = currentTarget else { return }
+                  let elapsedMs = Date().timeIntervalSince(target.spawnedAt) * 1000.0
+
+                  // 1. Check Target Timeout
+                  if elapsedMs >= difficulty.targetTimeoutMs {
+                      if target.kind == .fakeOutBomb {
+                          // Player disciplined: resisted fake-out bomb!
+                          score += 75
+                          hits += 1
+                          combo += 1
+                          maxCombo = max(maxCombo, combo)
+                          appendBurst(at: target.position, text: "识破假动作 +75", color: .green)
+                          statusBanner = "好眼力！成功忍住未碰假动作陷阱 (+75)"
+                      } else {
+                          misses += 1
+                          combo = 0
+                          samples.append(SplitReactionSample(index: samples.count + 1, reactionMs: Int(difficulty.targetTimeoutMs), isLeftHandOrSide: target.isLeftSide, wasHit: false))
+                          if store.soundEffectsEnabled {
+                              SoundAndSpeechService.shared.playMissOrBombSound()
+                          }
+                          appendBurst(at: target.position, text: "MISS 超时!", color: .red)
+                          statusBanner = "启动偏慢！紧盯靶标加快出手速度！"
+                      }
+                      spawnNextTarget()
+                      return
+                  }
+
+                  // 2. Check Pose Collisions by Target Kind
+                  switch target.kind {
+                  case .overheadHurdle:
+                      // Player ducks nose below Y = 0.52
+                      if let nosePt = visionService.joints.nose, nosePt.y > 0.52 {
+                          triggerTargetHit(target: target)
+                      }
+                  case .doubleHandBlock:
+                      if let sec = target.secondaryPosition {
+                          let hitFirst = handPoints.contains { hypot($0.x - target.position.x, $0.y - target.position.y) < 0.15 }
+                          let hitSecond = handPoints.contains { hypot($0.x - sec.x, $0.y - sec.y) < 0.15 }
+                          if hitFirst && hitSecond {
+                              triggerTargetHit(target: target)
+                          }
+                      }
+                  case .lateralWingCone:
+                      let hitByHand = handPoints.contains { hypot($0.x - target.position.x, $0.y - target.position.y) < 0.15 }
+                      let hitByBodySlide: Bool = {
+                          guard let cx = visionService.joints.bodyCenterX else { return false }
+                          return abs(cx - target.position.x) < 0.16 && visionService.joints.isStanceLowEnough
+                      }()
+                      if hitByHand || hitByBodySlide {
+                          triggerTargetHit(target: target)
+                      }
+                  case .singleHandStrike, .fakeOutBomb:
+                      if handPoints.contains(where: { hypot($0.x - target.position.x, $0.y - target.position.y) < 0.145 }) {
+                          triggerTargetHit(target: target)
+                      }
+                  }
+              }
+
+              private func triggerTargetHit(target: ARVirtualTarget) {
+                  let reactionMs = max(115, Int(Date().timeIntervalSince(target.spawnedAt) * 1000.0))
+
+                  if target.kind == .fakeOutBomb {
+                      misses += 1
+                      combo = 0
+                      score = max(0, score - 90)
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playMissOrBombSound()
+                      }
+                      appendBurst(at: target.position, text: "误触陷阱 -90", color: .red)
+                      statusBanner = "被假动作骗了！红色靶标严禁触碰 (-90)"
+                      spawnNextTarget()
+                      return
+                  }
+
+                  hits += 1
+                  combo += 1
+                  maxCombo = max(maxCombo, combo)
+                  samples.append(SplitReactionSample(index: samples.count + 1, reactionMs: reactionMs, isLeftHandOrSide: target.isLeftSide, wasHit: true))
+
+                  let speedBonus = max(25, Int((difficulty.targetTimeoutMs - Double(reactionMs)) / 10.0))
+                  let points = 100 + speedBonus + (combo * 15)
+                  score += points
+
+                  if store.soundEffectsEnabled {
+                      if target.kind == .doubleHandBlock {
+                          SoundAndSpeechService.shared.playDoubleHitSound()
+                      } else {
+                          SoundAndSpeechService.shared.playHitSound(combo: combo)
+                      }
+                  }
+
+                  appendBurst(at: target.position, text: "\(reactionMs)ms +\(points)", color: .cyan)
+                  statusBanner = "极速命中！反应耗时 \(reactionMs)ms (连击 x\(combo))"
+                  spawnNextTarget()
+              }
+
+              private func appendBurst(at point: CGPoint, text: String, color: Color) {
+                  let burst = HitBurstEffect(normalizedPoint: point, text: text, color: color, createdAt: Date())
+                  hitBursts.append(burst)
+              }
+
+              private func spawnNextTarget() {
+                  let now = Date()
+                  switch mode {
+                  case .ballHandlingStrike:
+                      let spot = ballHandlingSpots.randomElement() ?? (CGPoint(x: 0.22, y: 0.35), "左侧护球靶", true)
+                      let isBomb = Double.random(in: 0...1) < (difficulty.fakeBombProbability * 0.75)
+                      let subtitle = spot.2 ? "建议用左手(护球手)触击" : "建议用右手(护球手)触击"
+                      currentTarget = ARVirtualTarget(
+                          position: spot.0,
+                          secondaryPosition: nil,
+                          label: isBomb ? "假动作勿碰" : spot.1,
+                          subtitle: isBomb ? "保持运球不伸手" : subtitle,
+                          kind: isBomb ? .fakeOutBomb : .singleHandStrike,
+                          spawnedAt: now,
+                          isLeftSide: spot.2
+                      )
+                      statusBanner = isBomb ? "红色假动作陷阱！继续运球别伸手！" : "一手运球，另一手快速拍击【\(spot.1)】"
+
+                  case .agilityLateralShuttle:
+                      let hurdleRoll = Double.random(in: 0...1)
+                      if hurdleRoll < 0.24 {
+                          currentTarget = ARVirtualTarget(
+                              position: CGPoint(x: 0.50, y: 0.30),
+                              secondaryPosition: nil,
+                              label: "高空虚拟横杆",
+                              subtitle: "迅速屈膝低头下潜闪避",
+                              kind: .overheadHurdle,
+                              spawnedAt: now,
+                              isLeftSide: nextShuttleLeft
+                          )
+                          statusBanner = "⚡️ 黄色横杆来袭！迅速屈膝低头下潜！"
+                          if store.voiceCoachEnabled {
+                              SoundAndSpeechService.shared.speakCoach("下潜闪避", rate: 0.58)
+                          }
+                      } else {
+                          nextShuttleLeft.toggle()
+                          let pos = CGPoint(x: nextShuttleLeft ? 0.18 : 0.82, y: 0.54)
+                          let label = nextShuttleLeft ? "左侧边线锥" : "右侧边线锥"
+                          currentTarget = ARVirtualTarget(
+                              position: pos,
+                              secondaryPosition: nil,
+                              label: label,
+                              subtitle: "压低重心滑步触碰",
+                              kind: .lateralWingCone,
+                              spawnedAt: now,
+                              isLeftSide: nextShuttleLeft
+                          )
+                          statusBanner = nextShuttleLeft ? "向左低重心横移滑步！" : "向右低重心横移滑步！"
+                          if store.voiceCoachEnabled {
+                              SoundAndSpeechService.shared.speakCoach(nextShuttleLeft ? "左滑步" : "右滑步", rate: 0.58)
+                          }
+                      }
+
+                  default: // .closeoutReadReact
+                      let roll = Double.random(in: 0...1)
+                      if roll < difficulty.fakeBombProbability {
+                          let spot = ballHandlingSpots.randomElement()!
+                          currentTarget = ARVirtualTarget(
+                              position: spot.0,
+                              secondaryPosition: nil,
+                              label: "投篮假动作",
+                              subtitle: "严禁起跳或伸手触碰",
+                              kind: .fakeOutBomb,
+                              spawnedAt: now,
+                              isLeftSide: spot.2
+                          )
+                          statusBanner = "红灯投篮假动作！千万别伸手吃晃！"
+                      } else if roll < difficulty.fakeBombProbability + 0.35 {
+                          currentTarget = ARVirtualTarget(
+                              position: CGPoint(x: 0.28, y: 0.26),
+                              secondaryPosition: CGPoint(x: 0.72, y: 0.26),
+                              label: "双手高举干扰",
+                              subtitle: "左右双手同时举起触碰",
+                              kind: .doubleHandBlock,
+                              spawnedAt: now,
+                              isLeftSide: true
+                          )
+                          statusBanner = "蓝色双靶！双手高举同时封盖干扰！"
+                          if store.voiceCoachEnabled {
+                              SoundAndSpeechService.shared.speakCoach("双手干扰", rate: 0.58)
+                          }
+                      } else {
+                          let spot = ballHandlingSpots.randomElement()!
+                          currentTarget = ARVirtualTarget(
+                              position: spot.0,
+                              secondaryPosition: nil,
+                              label: "极速扑防干扰",
+                              subtitle: "单手快速伸展封盖",
+                              kind: .singleHandStrike,
+                              spawnedAt: now,
+                              isLeftSide: spot.2
+                          )
+                          statusBanner = "绿靶出手！极速伸手扑防【\(spot.1)】！"
+                      }
+                  }
+              }
+
+              private func finishWorkout() {
+                  guard !isFinished else { return }
+                  isFinished = true
+                  visionService.stopSession()
+
+                  let hitSamples = samples.filter { $0.wasHit }
+                  let allMs = hitSamples.map { $0.reactionMs }
+                  let leftMs = hitSamples.filter { $0.isLeftHandOrSide }.map { $0.reactionMs }
+                  let rightMs = hitSamples.filter { !$0.isLeftHandOrSide }.map { $0.reactionMs }
+
+                  let avgMs = allMs.isEmpty ? 0 : (allMs.reduce(0, +) / allMs.count)
+                  let bestMs = allMs.min() ?? 0
+                  let lAvg = leftMs.isEmpty ? avgMs : (leftMs.reduce(0, +) / leftMs.count)
+                  let rAvg = rightMs.isEmpty ? avgMs : (rightMs.reduce(0, +) / rightMs.count)
+
+                  let record = TrainingRecord(
+                      id: UUID(),
+                      date: Date(),
+                      mode: mode,
+                      difficulty: difficulty,
+                      score: score,
+                      hits: hits,
+                      misses: misses,
+                      avgReactionMs: avgMs,
+                      bestReactionMs: bestMs,
+                      leftAvgMs: lAvg,
+                      rightAvgMs: rAvg,
+                      maxCombo: maxCombo,
+                      durationSeconds: 45,
+                      samples: samples
+                  )
+                  store.addRecord(record)
+                  onFinish(record)
+              }
+
+              // MARK: - HomeCourt AR Canvas Rendering
+              private func drawHomeCourtPerspectiveFloor(context: GraphicsContext, size: CGSize) {
+                  var floorGrid = Path()
+                  let topY = size.height * 0.68
+                  let bottomY = size.height * 0.92
+                  // Trapezoid perspective paint zone
+                  floorGrid.move(to: CGPoint(x: size.width * 0.24, y: topY))
+                  floorGrid.addLine(to: CGPoint(x: size.width * 0.76, y: topY))
+                  floorGrid.addLine(to: CGPoint(x: size.width * 0.94, y: bottomY))
+                  floorGrid.addLine(to: CGPoint(x: size.width * 0.06, y: bottomY))
+                  floorGrid.closeSubpath()
+
+                  context.fill(floorGrid, with: .color(Color.cyan.opacity(0.08)))
+                  context.stroke(floorGrid, with: .color(Color.cyan.opacity(0.35)), lineWidth: 2)
+              }
+
+              private func drawHandCometTrails(context: GraphicsContext, size: CGSize) {
+                  func drawTrail(_ pts: [CGPoint], color: Color) {
+                      guard pts.count >= 2 else { return }
+                      for i in 1..<pts.count {
+                          let p1 = CGPoint(x: pts[i - 1].x * size.width, y: pts[i - 1].y * size.height)
+                          let p2 = CGPoint(x: pts[i].x * size.width, y: pts[i].y * size.height)
+                          let ratio = Double(i) / Double(pts.count)
+                          var seg = Path()
+                          seg.move(to: p1)
+                          seg.addLine(to: p2)
+                          context.stroke(seg, with: .color(color.opacity(ratio * 0.75)), style: StrokeStyle(lineWidth: CGFloat(ratio * 14), lineCap: .round))
+                      }
+                  }
+                  drawTrail(visionService.leftHandTrail, color: .orange)
+                  drawTrail(visionService.rightHandTrail, color: .cyan)
+              }
+
+              private func drawNeonBodySkeleton(context: GraphicsContext, size: CGSize) {
+                  let j = visionService.joints
+                  func scr(_ pt: CGPoint?) -> CGPoint? {
+                      guard let p = pt else { return nil }
+                      return CGPoint(x: p.x * size.width, y: p.y * size.height)
+                  }
+
+                  let bones: [(CGPoint?, CGPoint?)] = [
+                      (j.leftShoulder, j.rightShoulder),
+                      (j.leftShoulder, j.leftElbow),
+                      (j.leftElbow, j.leftWrist),
+                      (j.rightShoulder, j.rightElbow),
+                      (j.rightElbow, j.rightWrist),
+                      (j.leftShoulder, j.rootHip),
+                      (j.rightShoulder, j.rootHip),
+                      (j.rootHip, j.leftKnee),
+                      (j.rootHip, j.rightKnee),
+                      (j.leftKnee, j.leftAnkle),
+                      (j.rightKnee, j.rightAnkle)
+                  ]
+
+                  for (a, b) in bones {
+                      if let p1 = scr(a), let p2 = scr(b) {
+                          var path = Path()
+                          path.move(to: p1)
+                          path.addLine(to: p2)
+                          context.stroke(path, with: .color(Color.cyan.opacity(0.85)), style: StrokeStyle(lineWidth: 4.5, lineCap: .round))
+                      }
+                  }
+
+                  // Draw Glowing Palm Strike Reticles
+                  for (palm, color) in [(j.leftPalmCenter, Color.orange), (j.rightPalmCenter, Color.cyan)] {
+                      if let p = scr(palm) {
+                          let outer = CGRect(x: p.x - 24, y: p.y - 24, width: 48, height: 48)
+                          let inner = CGRect(x: p.x - 10, y: p.y - 10, width: 20, height: 20)
+                          context.fill(Path(ellipseIn: outer), with: .color(color.opacity(0.32)))
+                          context.stroke(Path(ellipseIn: outer), with: .color(.white), lineWidth: 2.5)
+                          context.fill(Path(ellipseIn: inner), with: .color(color))
+                      }
+                  }
+              }
+          }
+          EOF
+
+          # 7. Generate Views/CourtPodReflexView.swift (3x3 Tabletop/Floor Court Reaction Matrix)
+          cat << 'EOF' > HoopFlashPro/Sources/Views/CourtPodReflexView.swift
+          import SwiftUI
+
+          enum PodSignalType {
+              case driveGreen
+              case crossoverOrange
+              case chargeFakeRed
+          }
+
+          struct ActivePodState {
+              let index: Int
+              let type: PodSignalType
+              let promptText: String
+              let spawnedAt: Date
+              var tapsRemaining: Int
+          }
+
+          struct CourtPodReflexView: View {
+              let difficulty: DifficultyTier
+              @ObservedObject var store: TrainingStore
+              let onFinish: (TrainingRecord) -> Void
+              let onCancel: () -> Void
+
+              @State private var remainingSeconds: Int = 45
+              @State private var score: Int = 0
+              @State private var hits: Int = 0
+              @State private var misses: Int = 0
+              @State private var combo: Int = 0
+              @State private var maxCombo: Int = 0
+              @State private var samples: [SplitReactionSample] = []
+              @State private var activePod: ActivePodState? = nil
+              @State private var coachInstruction: String = "点击亮起的球场反应灯！"
+              @State private var isFinished: Bool = false
+
+              private let courtZones = [
+                  "左翼三分", "弧顶组织", "右翼三分",
+                  "左侧肘区", "罚球中枢", "右侧肘区",
+                  "左底角", "篮下油漆区", "右底角"
+              ]
+
+              private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+              private let podCheckTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+              var body: some View {
+                  VStack(spacing: 14) {
+                      HStack {
+                          Button {
+                              isFinished = true
+                              SoundAndSpeechService.shared.stopSpeech()
+                              onCancel()
+                          } label: {
+                              Image(systemName: "xmark")
+                                  .font(.system(size: 16, weight: .black))
+                                  .foregroundColor(.white)
+                                  .frame(width: 38, height: 38)
+                                  .background(Color.white.opacity(0.14))
+                                  .clipShape(Circle())
+                          }
+
+                          Spacer()
+
+                          Text("3x3 球场战术反应灯矩阵")
+                              .font(.system(size: 17, weight: .black))
+                              .foregroundColor(.white)
+
+                          Spacer()
+
+                          Text("\(remainingSeconds)s")
+                              .font(.system(size: 20, weight: .black, design: .rounded))
+                              .foregroundColor(remainingSeconds <= 10 ? .red : .green)
+                              .frame(width: 48)
+                      }
+                      .padding(.horizontal, 16)
+                      .padding(.top, 8)
+
+                      HStack(spacing: 10) {
+                          statPill(label: "SCORE", value: "\(score)", color: .green)
+                          statPill(label: "COMBO", value: "x\(combo)", color: .orange)
+                          let hitList = samples.filter { $0.wasHit }.map { $0.reactionMs }
+                          let avg = hitList.isEmpty ? 0 : (hitList.reduce(0, +) / hitList.count)
+                          statPill(label: "AVG REACTION", value: avg > 0 ? "\(avg)ms" : "--", color: .cyan)
+                      }
+                      .padding(.horizontal, 16)
+
+                      VStack(spacing: 4) {
+                          Text("实时战术口令")
+                              .font(.system(size: 11, weight: .bold))
+                              .foregroundColor(.white.opacity(0.6))
+                          Text(coachInstruction)
+                              .font(.system(size: 17, weight: .heavy))
+                              .foregroundColor(.yellow)
+                              .multilineTextAlignment(.center)
+                              .lineLimit(2)
+                      }
+                      .frame(maxWidth: .infinity)
+                      .padding(.vertical, 12)
+                      .padding(.horizontal, 12)
+                      .background(Color.white.opacity(0.07))
+                      .clipShape(RoundedRectangle(cornerRadius: 16))
+                      .padding(.horizontal, 16)
+
+                      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                          ForEach(0..<9, id: \.self) { idx in
+                              podButton(for: idx)
+                          }
+                      }
+                      .padding(.horizontal, 16)
+
+                      HStack(spacing: 14) {
+                          legendDot(color: .green, text: "绿灯：单点突破")
+                          legendDot(color: .orange, text: "橙灯：双击变向x2")
+                          legendDot(color: .red, text: "红灯：陷阱勿碰")
+                      }
+                      .font(.system(size: 11, weight: .semibold))
+                      .foregroundColor(.white.opacity(0.75))
+
+                      Spacer()
+                  }
+                  .background(Color(red: 0.04, green: 0.06, blue: 0.11).ignoresSafeArea())
+                  .onAppear {
+                      spawnNextPod()
+                  }
+                  .onReceive(countdownTimer) { _ in
+                      guard !isFinished else { return }
+                      if remainingSeconds > 0 {
+                          remainingSeconds -= 1
+                      } else {
+                          completeSession()
+                      }
+                  }
+                  .onReceive(podCheckTimer) { _ in
+                      guard !isFinished, let pod = activePod else { return }
+                      let elapsedMs = Date().timeIntervalSince(pod.spawnedAt) * 1000.0
+                      if elapsedMs >= difficulty.targetTimeoutMs {
+                          if pod.type == .chargeFakeRed {
+                              hits += 1
+                              combo += 1
+                              maxCombo = max(maxCombo, combo)
+                              score += 75
+                              coachInstruction = "好判断！成功识破进攻犯规陷阱 (+75)"
+                          } else {
+                              misses += 1
+                              combo = 0
+                              samples.append(SplitReactionSample(index: samples.count + 1, reactionMs: Int(difficulty.targetTimeoutMs), isLeftHandOrSide: pod.index % 3 == 0, wasHit: false))
+                              if store.soundEffectsEnabled {
+                                  SoundAndSpeechService.shared.playMissOrBombSound()
+                              }
+                              coachInstruction = "超时未触击！加快手眼协调速度！"
+                          }
+                          spawnNextPod()
+                      }
+                  }
+              }
+
+              private func podButton(for index: Int) -> some View {
+                  let isCurrent = activePod?.index == index
+                  let podType = activePod?.type ?? .driveGreen
+
+                  let bgColor: Color = {
+                      guard isCurrent else { return Color.white.opacity(0.06) }
+                      switch podType {
+                      case .driveGreen: return .green
+                      case .crossoverOrange: return .orange
+                      case .chargeFakeRed: return .red
+                      }
+                  }()
+
+                  return Button {
+                      handlePodTap(index: index)
+                  } label: {
+                      VStack(spacing: 6) {
+                          Image(systemName: isCurrent ? iconForPod(podType) : "circle.dashed")
+                              .font(.system(size: isCurrent ? 30 : 22, weight: .bold))
+                              .foregroundColor(.white)
+
+                          Text(courtZones[index])
+                              .font(.system(size: 13, weight: .bold))
+                              .foregroundColor(.white.opacity(isCurrent ? 1.0 : 0.6))
+                              .lineLimit(1)
+
+                          if isCurrent, let pod = activePod {
+                              Text(pod.promptText)
+                                  .font(.system(size: 10, weight: .heavy))
+                                  .foregroundColor(.black)
+                                  .padding(.horizontal, 8)
+                                  .padding(.vertical, 2)
+                                  .background(Color.white.opacity(0.92))
+                                  .clipShape(Capsule())
+                          }
+                      }
+                      .frame(maxWidth: .infinity)
+                      .frame(height: 104)
+                      .background(bgColor)
+                      .clipShape(RoundedRectangle(cornerRadius: 18))
+                      .overlay(
+                          RoundedRectangle(cornerRadius: 18)
+                              .stroke(isCurrent ? Color.white : Color.white.opacity(0.10), lineWidth: isCurrent ? 2.5 : 1)
+                      )
+                  }
+                  .buttonStyle(.plain)
+              }
+
+              private func iconForPod(_ type: PodSignalType) -> String {
+                  switch type {
+                  case .driveGreen: return "bolt.fill"
+                  case .crossoverOrange: return "flame.fill"
+                  case .chargeFakeRed: return "hand.raised.slash.fill"
+                  }
+              }
+
+              private func handlePodTap(index: Int) {
+                  guard var pod = activePod else { return }
+                  if index != pod.index {
+                      misses += 1
+                      combo = 0
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playMissOrBombSound()
+                      }
+                      coachInstruction = "拍错区域了！看准高亮球场灯位！"
+                      return
+                  }
+
+                  if pod.type == .chargeFakeRed {
+                      misses += 1
+                      combo = 0
+                      score = max(0, score - 90)
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playMissOrBombSound()
+                      }
+                      coachInstruction = "误触红灯陷阱！(-90)"
+                      spawnNextPod()
+                      return
+                  }
+
+                  pod.tapsRemaining -= 1
+                  if pod.tapsRemaining > 0 {
+                      activePod = pod
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playHitSound(combo: combo)
+                      }
+                      return
+                  }
+
+                  let reactionMs = max(110, Int(Date().timeIntervalSince(pod.spawnedAt) * 1000.0))
+                  samples.append(SplitReactionSample(index: samples.count + 1, reactionMs: reactionMs, isLeftHandOrSide: index % 3 == 0, wasHit: true))
+                  hits += 1
+                  combo += 1
+                  maxCombo = max(maxCombo, combo)
+                  let points = 110 + max(0, Int((difficulty.targetTimeoutMs - Double(reactionMs)) / 10.0)) + (combo * 12)
+                  score += points
+                  if store.soundEffectsEnabled {
+                      SoundAndSpeechService.shared.playHitSound(combo: combo)
+                  }
+                  coachInstruction = "漂亮！\(courtZones[index]) 反应 \(reactionMs)ms (+\(points))"
+                  spawnNextPod()
+              }
+
+              private func spawnNextPod() {
+                  let nextIdx = Int.random(in: 0..<9)
+                  let roll = Double.random(in: 0...1)
+                  let type: PodSignalType
+                  let prompt: String
+                  let taps: Int
+
+                  if roll < difficulty.fakeBombProbability {
+                      type = .chargeFakeRed
+                      prompt = "勿碰陷阱"
+                      taps = 1
+                      coachInstruction = "红灯陷阱！【\(courtZones[nextIdx])】切勿拍击！"
+                  } else if roll < difficulty.fakeBombProbability + 0.28 {
+                      type = .crossoverOrange
+                      prompt = "双击变向x2"
+                      taps = 2
+                      coachInstruction = "橙色双变向！快速连点【\(courtZones[nextIdx])】2次！"
+                      if store.voiceCoachEnabled {
+                          SoundAndSpeechService.shared.speakCoach("双击\(courtZones[nextIdx])", rate: 0.60)
+                      }
+                  } else {
+                      type = .driveGreen
+                      prompt = "极速单点"
+                      taps = 1
+                      coachInstruction = "绿灯突破！立即点击【\(courtZones[nextIdx])】！"
+                      if store.voiceCoachEnabled {
+                          SoundAndSpeechService.shared.speakCoach(courtZones[nextIdx], rate: 0.60)
+                      }
+                  }
+
+                  activePod = ActivePodState(index: nextIdx, type: type, promptText: prompt, spawnedAt: Date(), tapsRemaining: taps)
+              }
+
+              private func completeSession() {
+                  isFinished = true
+                  let hitList = samples.filter { $0.wasHit }.map { $0.reactionMs }
+                  let avgMs = hitList.isEmpty ? 0 : (hitList.reduce(0, +) / hitList.count)
+                  let bestMs = hitList.min() ?? 0
+                  let record = TrainingRecord(
+                      id: UUID(),
+                      date: Date(),
+                      mode: .courtPodReflex,
+                      difficulty: difficulty,
+                      score: score,
+                      hits: hits,
+                      misses: misses,
+                      avgReactionMs: avgMs,
+                      bestReactionMs: bestMs,
+                      leftAvgMs: avgMs,
+                      rightAvgMs: avgMs,
+                      maxCombo: maxCombo,
+                      durationSeconds: 45,
+                      samples: samples
+                  )
+                  store.addRecord(record)
+                  onFinish(record)
+              }
+
+              private func statPill(label: String, value: String, color: Color) -> some View {
+                  VStack(spacing: 2) {
+                      Text(label)
+                          .font(.system(size: 10, weight: .bold))
+                          .foregroundColor(.white.opacity(0.6))
+                      Text(value)
+                          .font(.system(size: 18, weight: .black, design: .rounded))
+                          .foregroundColor(color)
+                  }
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 8)
+                  .background(Color.white.opacity(0.06))
+                  .clipShape(RoundedRectangle(cornerRadius: 12))
+              }
+
+              private func legendDot(color: Color, text: String) -> some View {
+                  HStack(spacing: 4) {
+                      Circle().fill(color).frame(width: 8, height: 8)
+                      Text(text)
+                  }
+              }
+          }
+          EOF
+
+          # 8. Generate Views/DribbleRhythmView.swift (High-Frequency Footwork & Head-Up Number Vision)
+          cat << 'EOF' > HoopFlashPro/Sources/Views/DribbleRhythmView.swift
+          import SwiftUI
+
+          struct DribbleRhythmView: View {
+              let difficulty: DifficultyTier
+              @ObservedObject var store: TrainingStore
+              let onFinish: (TrainingRecord) -> Void
+              let onCancel: () -> Void
+
+              @State private var remainingSeconds: Int = 45
+              @State private var currentBPM: Int = 110
+              @State private var beatCount: Int = 0
+              @State private var leftFootActive: Bool = true
+              @State private var headUpNumber: Int = 3
+              @State private var options: [Int] = [1, 3, 5]
+              @State private var currentMoveCall: String = "原地高频碎步 + 低手运球"
+              @State private var score: Int = 0
+              @State private var hits: Int = 0
+              @State private var misses: Int = 0
+              @State private var combo: Int = 0
+              @State private var maxCombo: Int = 0
+              @State private var promptSpawnedAt: Date = Date()
+              @State private var samples: [SplitReactionSample] = []
+              @State private var isFinished: Bool = false
+
+              private let moveLibrary = [
+                  "原地高频碎步 (Quick Feet)！脚尖点地！",
+                  "体前大幅度变向 (Crossover)！压低重心！",
+                  "左手单手重砸球 (Pound)！抬头看屏幕！",
+                  "右手极速内外运球 (In & Out)！保持节奏！",
+                  "胯下连续交叉换手！绝对不要低头看球！"
+              ]
+
+              private let secondTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+              @State private var beatTimer: Timer? = nil
+
+              var body: some View {
+                  VStack(spacing: 14) {
+                      HStack {
+                          Button {
+                              isFinished = true
+                              stopBeatTimer()
+                              SoundAndSpeechService.shared.stopSpeech()
+                              onCancel()
+                          } label: {
+                              Image(systemName: "xmark")
+                                  .font(.system(size: 16, weight: .black))
+                                  .foregroundColor(.white)
+                                  .frame(width: 38, height: 38)
+                                  .background(Color.white.opacity(0.14))
+                                  .clipShape(Circle())
+                          }
+                          Spacer()
+                          Text("高频碎步运球节拍 & 抬头视野")
+                              .font(.system(size: 16, weight: .black))
+                              .foregroundColor(.white)
+                          Spacer()
+                          Text("\(remainingSeconds)s")
+                              .font(.system(size: 20, weight: .black, design: .rounded))
+                              .foregroundColor(.purple)
+                      }
+                      .padding(.horizontal, 16)
+                      .padding(.top, 8)
+
+                      VStack(spacing: 6) {
+                          HStack {
+                              Label("\(currentBPM) BPM 步频", systemImage: "metronome.fill")
+                                  .font(.system(size: 15, weight: .black, design: .rounded))
+                                  .foregroundColor(.cyan)
+                              Spacer()
+                              Text("连击 x\(combo)  •  得分 \(score)")
+                                  .font(.system(size: 14, weight: .bold))
+                                  .foregroundColor(.orange)
+                          }
+                          Text(currentMoveCall)
+                              .font(.system(size: 16, weight: .heavy))
+                              .foregroundColor(.yellow)
+                              .frame(maxWidth: .infinity, alignment: .leading)
+                      }
+                      .padding(14)
+                      .background(Color.white.opacity(0.07))
+                      .clipShape(RoundedRectangle(cornerRadius: 16))
+                      .padding(.horizontal, 16)
+
+                      HStack(spacing: 20) {
+                          footIndicator(title: "左脚踏步 (L)", isActive: leftFootActive)
+                          footIndicator(title: "右脚踏步 (R)", isActive: !leftFootActive)
+                      }
+                      .padding(.horizontal, 16)
+
+                      VStack(spacing: 12) {
+                          Text("抬头视野训练：看清教练手势数字并点击对应答案")
+                              .font(.system(size: 12, weight: .semibold))
+                              .foregroundColor(.white.opacity(0.75))
+
+                          ZStack {
+                              Circle()
+                                  .fill(
+                                      RadialGradient(
+                                          colors: [Color.purple, Color.purple.opacity(0.2)],
+                                          center: .center,
+                                          startRadius: 10,
+                                          endRadius: 76
+                                      )
+                                  )
+                                  .frame(width: 136, height: 136)
+                                  .overlay(Circle().stroke(Color.white, lineWidth: 3))
+
+                              VStack(spacing: 2) {
+                                  Text("\(headUpNumber)")
+                                      .font(.system(size: 62, weight: .black, design: .rounded))
+                                      .foregroundColor(.white)
+                                  Text("手势比数")
+                                      .font(.system(size: 11, weight: .bold))
+                                      .foregroundColor(.white.opacity(0.8))
+                              }
+                          }
+
+                          HStack(spacing: 14) {
+                              ForEach(options, id: \.self) { num in
+                                  Button {
+                                      verifyNumberTap(num)
+                                  } label: {
+                                      Text("\(num)")
+                                          .font(.system(size: 26, weight: .black, design: .rounded))
+                                          .foregroundColor(.white)
+                                          .frame(maxWidth: .infinity)
+                                          .frame(height: 58)
+                                          .background(Color.white.opacity(0.14))
+                                          .clipShape(RoundedRectangle(cornerRadius: 14))
+                                          .overlay(
+                                              RoundedRectangle(cornerRadius: 14)
+                                                  .stroke(Color.cyan.opacity(0.6), lineWidth: 2)
+                                          )
+                                  }
+                              }
+                          }
+                      }
+                      .padding(16)
+                      .background(Color.white.opacity(0.06))
+                      .clipShape(RoundedRectangle(cornerRadius: 20))
+                      .padding(.horizontal, 16)
+
+                      Spacer()
+                  }
+                  .background(Color(red: 0.06, green: 0.05, blue: 0.14).ignoresSafeArea())
+                  .onAppear {
+                      currentBPM = difficulty.baseBPM
+                      generateNewHeadUpPrompt()
+                      restartBeatTimer()
+                  }
+                  .onDisappear {
+                      stopBeatTimer()
+                  }
+                  .onReceive(secondTimer) { _ in
+                      guard !isFinished else { return }
+                      if remainingSeconds > 0 {
+                          remainingSeconds -= 1
+                          if remainingSeconds % 9 == 0 {
+                              currentBPM = min(210, currentBPM + 8)
+                              restartBeatTimer()
+                              if let nextMove = moveLibrary.randomElement() {
+                                  currentMoveCall = nextMove
+                                  if store.voiceCoachEnabled {
+                                      SoundAndSpeechService.shared.speakCoach(nextMove, rate: 0.56)
+                                  }
+                              }
+                          }
+                      } else {
+                          finishSession()
+                      }
+                  }
+              }
+
+              private func footIndicator(title: String, isActive: Bool) -> some View {
+                  VStack(spacing: 4) {
+                      Image(systemName: "shoeprints.fill")
+                          .font(.system(size: 28))
+                          .foregroundColor(isActive ? .black : .white.opacity(0.35))
+                      Text(title)
+                          .font(.system(size: 12, weight: .heavy))
+                          .foregroundColor(isActive ? .black : .white.opacity(0.45))
+                  }
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 12)
+                  .background(isActive ? Color.cyan : Color.white.opacity(0.06))
+                  .clipShape(RoundedRectangle(cornerRadius: 14))
+              }
+
+              private func restartBeatTimer() {
+                  stopBeatTimer()
+                  let interval = 60.0 / Double(max(60, currentBPM))
+                  beatTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+                      DispatchQueue.main.async {
+                          beatCount += 1
+                          leftFootActive.toggle()
+                          if store.soundEffectsEnabled {
+                              SoundAndSpeechService.shared.playMetronomeTick(isAccent: beatCount % 4 == 0)
+                          }
+                      }
+                  }
+              }
+
+              private func stopBeatTimer() {
+                  beatTimer?.invalidate()
+                  beatTimer = nil
+              }
+
+              private func generateNewHeadUpPrompt() {
+                  let target = Int.random(in: 1...5)
+                  headUpNumber = target
+                  var set = Set<Int>([target])
+                  while set.count < 3 {
+                      set.insert(Int.random(in: 1...5))
+                  }
+                  options = Array(set).shuffled()
+                  promptSpawnedAt = Date()
+              }
+
+              private func verifyNumberTap(_ selected: Int) {
+                  let elapsedMs = max(130, Int(Date().timeIntervalSince(promptSpawnedAt) * 1000.0))
+                  if selected == headUpNumber {
+                      hits += 1
+                      combo += 1
+                      maxCombo = max(maxCombo, combo)
+                      samples.append(SplitReactionSample(index: samples.count + 1, reactionMs: elapsedMs, isLeftHandOrSide: leftFootActive, wasHit: true))
+                      score += 120 + (combo * 15)
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playHitSound(combo: combo)
+                      }
+                  } else {
+                      misses += 1
+                      combo = 0
+                      if store.soundEffectsEnabled {
+                          SoundAndSpeechService.shared.playMissOrBombSound()
+                      }
+                  }
+                  generateNewHeadUpPrompt()
+              }
+
+              private func finishSession() {
+                  isFinished = true
+                  stopBeatTimer()
+                  let hitList = samples.filter { $0.wasHit }.map { $0.reactionMs }
+                  let avgMs = hitList.isEmpty ? 420 : (hitList.reduce(0, +) / hitList.count)
+                  let bestMs = hitList.min() ?? 350
+                  let record = TrainingRecord(
+                      id: UUID(),
+                      date: Date(),
+                      mode: .dribbleRhythm,
+                      difficulty: difficulty,
+                      score: score + (beatCount * 5),
+                      hits: max(1, hits),
+                      misses: misses,
+                      avgReactionMs: avgMs,
+                      bestReactionMs: bestMs,
+                      leftAvgMs: avgMs,
+                      rightAvgMs: avgMs,
+                      maxCombo: maxCombo,
+                      durationSeconds: 45,
+                      samples: samples
+                  )
+                  store.addRecord(record)
+                  onFinish(record)
+              }
+          }
+          EOF
+
+          # 9. Generate Views/ContentView.swift (Redesigned Full-Screen Custom Header, Zero Cramped UI, HomeCourt Post-Workout Report)
+          cat << 'EOF' > HoopFlashPro/Sources/Views/ContentView.swift
+          import SwiftUI
+
+          struct ContentView: View {
+              @StateObject private var store = TrainingStore()
+              @State private var selectedDifficulty: DifficultyTier = .allStar
+              @State private var activeMode: DrillMode? = nil
+              @State private var latestFinishedRecord: TrainingRecord? = nil
+              @State private var selectedTab: Int = 0
+
+              var body: some View {
+                  ZStack {
+                      Color(red: 0.04, green: 0.06, blue: 0.11)
+                          .ignoresSafeArea()
+
+                      if let mode = activeMode {
+                          if mode.usesARCamera {
+                              VisionDrillView(
+                                  mode: mode,
+                                  difficulty: selectedDifficulty,
+                                  store: store,
+                                  onFinish: { rec in
+                                      activeMode = nil
+                                      latestFinishedRecord = rec
+                                  },
+                                  onCancel: {
+                                      activeMode = nil
+                                  }
+                              )
+                          } else if mode == .courtPodReflex {
+                              CourtPodReflexView(
+                                  difficulty: selectedDifficulty,
+                                  store: store,
+                                  onFinish: { rec in
+                                      activeMode = nil
+                                      latestFinishedRecord = rec
+                                  },
+                                  onCancel: {
+                                      activeMode = nil
+                                  }
+                              )
+                          } else {
+                              DribbleRhythmView(
+                                  difficulty: selectedDifficulty,
+                                  store: store,
+                                  onFinish: { rec in
+                                      activeMode = nil
+                                      latestFinishedRecord = rec
+                                  },
+                                  onCancel: {
+                                      activeMode = nil
+                                  }
+                              )
+                          }
+                      } else {
+                          VStack(spacing: 0) {
+                              // Custom Sleek Top App Bar (Eliminates ugly translucent NavigationView overlap!)
+                              customTopHeader
+
+                              // Main Content Area
+                              if selectedTab == 0 {
+                                  trainingCenterScroll
+                              } else {
+                                  analyticsScroll
+                              }
+
+                              // Custom Sleek Bottom Tab Bar
+                              customBottomTabBar
+                          }
+                      }
+                  }
+                  .sheet(item: $latestFinishedRecord) { record in
+                      WorkoutResultSheet(record: record) {
+                          latestFinishedRecord = nil
+                      }
+                  }
+              }
+
+              // MARK: - Custom Top Bar
+              private var customTopHeader: some View {
+                  HStack(spacing: 12) {
+                      HStack(spacing: 8) {
+                          Image(systemName: "basketball.fill")
+                              .font(.system(size: 20, weight: .black))
+                              .foregroundColor(.orange)
+                          Text("HOOPFLASH PRO")
+                              .font(.system(size: 18, weight: .black, design: .rounded))
+                              .foregroundColor(.white)
+                          Text("AR 2.0")
+                              .font(.system(size: 10, weight: .heavy))
+                              .foregroundColor(.black)
+                              .padding(.horizontal, 6)
+                              .padding(.vertical, 2)
+                              .background(Color.cyan)
+                              .clipShape(Capsule())
+                      }
+
+                      Spacer()
+
+                      // Quick Compact Audio & Voice Coach Pills (Replaces vertical word-wrapping UISwitch!)
+                      HStack(spacing: 8) {
+                          Button {
+                              store.voiceCoachEnabled.toggle()
+                          } label: {
+                              HStack(spacing: 4) {
+                                  Image(systemName: store.voiceCoachEnabled ? "waveform.circle.fill" : "speaker.slash.circle")
+                                      .font(.system(size: 14, weight: .bold))
+                                  Text("语音教练")
+                                      .font(.system(size: 11, weight: .bold))
+                                      .fixedSize(horizontal: true, vertical: false)
+                              }
+                              .foregroundColor(store.voiceCoachEnabled ? .black : .white.opacity(0.6))
+                              .padding(.horizontal, 10)
+                              .padding(.vertical, 6)
+                              .background(store.voiceCoachEnabled ? Color.orange : Color.white.opacity(0.08))
+                              .clipShape(Capsule())
+                          }
+
+                          Button {
+                              store.soundEffectsEnabled.toggle()
+                          } label: {
+                              HStack(spacing: 4) {
+                                  Image(systemName: store.soundEffectsEnabled ? "bell.badge.fill" : "bell.slash")
+                                      .font(.system(size: 13, weight: .bold))
+                                  Text("音效")
+                                      .font(.system(size: 11, weight: .bold))
+                                      .fixedSize(horizontal: true, vertical: false)
+                              }
+                              .foregroundColor(store.soundEffectsEnabled ? .black : .white.opacity(0.6))
+                              .padding(.horizontal, 10)
+                              .padding(.vertical, 6)
+                              .background(store.soundEffectsEnabled ? Color.cyan : Color.white.opacity(0.08))
+                              .clipShape(Capsule())
+                          }
+                      }
+                  }
+                  .padding(.horizontal, 16)
+                  .padding(.vertical, 10)
+                  .background(Color(red: 0.05, green: 0.08, blue: 0.14))
+              }
+
+              // MARK: - Training Center Tab
+              private var trainingCenterScroll: some View {
+                  ScrollView(showsIndicators: false) {
+                      VStack(alignment: .leading, spacing: 16) {
+                          // 1. Player Level & Telemetry Summary Card
+                          playerDashboardBanner
+
+                          // 2. Custom Un-truncated Difficulty Selector Pills
+                          HStack(spacing: 8) {
+                              ForEach(DifficultyTier.allCases) { tier in
+                                  let isSel = (selectedDifficulty == tier)
+                                  Button {
+                                      selectedDifficulty = tier
+                                  } label: {
+                                      Text(tier.rawValue)
+                                          .font(.system(size: 13, weight: .heavy))
+                                          .fixedSize(horizontal: true, vertical: false)
+                                          .foregroundColor(isSel ? .black : .white.opacity(0.75))
+                                          .frame(maxWidth: .infinity)
+                                          .padding(.vertical, 10)
+                                          .background(isSel ? Color.orange : Color.white.opacity(0.07))
+                                          .clipShape(RoundedRectangle(cornerRadius: 12))
+                                  }
+                              }
+                          }
+
+                          // 3. HomeCourt-Style Workout Cards
+                          ForEach(DrillMode.allCases) { mode in
+                              homeCourtDrillCard(mode: mode)
+                          }
+                      }
+                      .padding(.horizontal, 16)
+                      .padding(.vertical, 12)
+                  }
+              }
+
+              private var playerDashboardBanner: some View {
+                  VStack(alignment: .leading, spacing: 12) {
+                      HStack {
+                          VStack(alignment: .leading, spacing: 3) {
+                              HStack(spacing: 6) {
+                                  Text("Lv.\(store.xpLevel) \(store.playerName)")
+                                      .font(.system(size: 17, weight: .black))
+                                      .foregroundColor(.white)
+                                  Text("HomeCourt AR 引擎已就绪")
+                                      .font(.system(size: 10, weight: .bold))
+                                      .foregroundColor(.cyan)
+                                      .padding(.horizontal, 7)
+                                      .padding(.vertical, 2)
+                                      .background(Color.cyan.opacity(0.16))
+                                      .clipShape(Capsule())
+                              }
+                              Text("实时追踪手掌护球触靶、低重心横移滑步与毫秒级神经反射")
+                                  .font(.system(size: 11, weight: .medium))
+                                  .foregroundColor(.white.opacity(0.75))
+                          }
+                          Spacer()
+                      }
+
+                      HStack(spacing: 10) {
+                          metricBox(label: "累计特训", value: "\(store.totalSessions) 场", color: .white)
+                          metricBox(label: "最快单次反射", value: store.bestReactionEverMs > 0 ? "\(store.bestReactionEverMs) ms" : "待挑战", color: .yellow)
+                          metricBox(label: "近10场均值", value: store.averageReactionRecentMs > 0 ? "\(store.averageReactionRecentMs) ms" : "--", color: .cyan)
+                      }
+                  }
+                  .padding(14)
+                  .background(
+                      LinearGradient(
+                          colors: [Color(red: 0.14, green: 0.20, blue: 0.36), Color(red: 0.08, green: 0.11, blue: 0.20)],
+                          startPoint: .topLeading,
+                          endPoint: .bottomTrailing
+                      )
+                  )
+                  .clipShape(RoundedRectangle(cornerRadius: 18))
+                  .overlay(
+                      RoundedRectangle(cornerRadius: 18)
+                          .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                  )
+              }
+
+              private func metricBox(label: String, value: String, color: Color) -> some View {
+                  VStack(alignment: .leading, spacing: 2) {
+                      Text(label)
+                          .font(.system(size: 10, weight: .semibold))
+                          .foregroundColor(.white.opacity(0.65))
+                      Text(value)
+                          .font(.system(size: 15, weight: .black, design: .rounded))
+                          .foregroundColor(color)
+                          .fixedSize(horizontal: true, vertical: false)
+                  }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(10)
+                  .background(Color.black.opacity(0.28))
+                  .clipShape(RoundedRectangle(cornerRadius: 12))
+              }
+
+              private func homeCourtDrillCard(mode: DrillMode) -> some View {
+                  VStack(alignment: .leading, spacing: 12) {
+                      // Top Row: Icon + Title + Tag
+                      HStack(alignment: .center, spacing: 12) {
+                          ZStack {
+                              RoundedRectangle(cornerRadius: 14)
+                                  .fill(mode.themeColor.opacity(0.20))
+                                  .frame(width: 48, height: 48)
+                              Image(systemName: mode.iconName)
+                                  .font(.system(size: 22, weight: .bold))
+                                  .foregroundColor(mode.themeColor)
+                          }
+
+                          VStack(alignment: .leading, spacing: 4) {
+                              HStack(spacing: 6) {
+                                  Text(mode.badgeTag)
+                                      .font(.system(size: 10, weight: .heavy))
+                                      .foregroundColor(mode.themeColor)
+                                      .padding(.horizontal, 7)
+                                      .padding(.vertical, 2)
+                                      .background(mode.themeColor.opacity(0.16))
+                                      .clipShape(Capsule())
+
+                                  if mode.usesARCamera {
+                                      Text("AI 骨骼追踪")
+                                          .font(.system(size: 10, weight: .bold))
+                                          .foregroundColor(.white.opacity(0.75))
+                                  }
+                              }
+
+                              Text(mode.rawValue)
+                                  .font(.system(size: 17, weight: .black))
+                                  .foregroundColor(.white)
+                                  .fixedSize(horizontal: false, vertical: true)
+                          }
+                          Spacer()
+                      }
+
+                      // Description
+                      Text(mode.subtitle)
+                          .font(.system(size: 13, weight: .medium))
+                          .foregroundColor(.white.opacity(0.82))
+                          .fixedSize(horizontal: false, vertical: true)
+
+                      // Bottom Row: Setup Tip + Full Horizontal Action Button (Never wraps into circle!)
+                      HStack(spacing: 12) {
+                          HStack(spacing: 5) {
+                              Image(systemName: "info.circle.fill")
+                                  .font(.system(size: 12))
+                                  .foregroundColor(mode.themeColor)
+                              Text(mode.setupInstruction)
+                                  .font(.system(size: 11, weight: .medium))
+                                  .foregroundColor(.white.opacity(0.68))
+                                  .lineLimit(2)
+                          }
+
+                          Spacer(minLength: 4)
+
+                          Button {
+                              activeMode = mode
+                          } label: {
+                              HStack(spacing: 5) {
+                                  Image(systemName: "play.fill")
+                                      .font(.system(size: 11, weight: .black))
+                                  Text("立即开练")
+                                      .font(.system(size: 13, weight: .black))
+                                      .fixedSize(horizontal: true, vertical: false)
+                              }
+                              .foregroundColor(.black)
+                              .padding(.horizontal, 16)
+                              .padding(.vertical, 10)
+                              .background(mode.themeColor)
+                              .clipShape(Capsule())
+                          }
+                      }
+                  }
+                  .padding(16)
+                  .background(Color.white.opacity(0.06))
+                  .clipShape(RoundedRectangle(cornerRadius: 18))
+                  .overlay(
+                      RoundedRectangle(cornerRadius: 18)
+                          .stroke(mode.themeColor.opacity(0.35), lineWidth: 1.2)
+                  )
+              }
+
+              // MARK: - Analytics & Badges Tab
+              private var analyticsScroll: some View {
+                  ScrollView(showsIndicators: false) {
+                      VStack(alignment: .leading, spacing: 18) {
+                          Text("荣誉勋章馆 (HomeCourt Achievements)")
+                              .font(.system(size: 16, weight: .black))
+                              .foregroundColor(.white)
+
+                          ForEach(store.badges) { badge in
+                              HStack(spacing: 12) {
+                                  Image(systemName: badge.icon)
+                                      .font(.system(size: 26))
+                                      .foregroundColor(badge.isUnlocked ? badge.accent : .gray)
+                                      .frame(width: 40)
+
+                                  VStack(alignment: .leading, spacing: 2) {
+                                      Text(badge.title)
+                                          .font(.system(size: 15, weight: .bold))
+                                          .foregroundColor(badge.isUnlocked ? .white : .white.opacity(0.5))
+                                      Text(badge.description)
+                                          .font(.system(size: 12))
+                                          .foregroundColor(.white.opacity(0.65))
+                                  }
+                                  Spacer()
+                                  Text(badge.isUnlocked ? "已点亮" : "待解锁")
+                                      .font(.system(size: 11, weight: .heavy))
+                                      .fixedSize(horizontal: true, vertical: false)
+                                      .foregroundColor(badge.isUnlocked ? .black : .white.opacity(0.45))
+                                      .padding(.horizontal, 10)
+                                      .padding(.vertical, 5)
+                                      .background(badge.isUnlocked ? badge.accent : Color.white.opacity(0.08))
+                                      .clipShape(Capsule())
+                              }
+                              .padding(14)
+                              .background(Color.white.opacity(0.06))
+                              .clipShape(RoundedRectangle(cornerRadius: 16))
+                          }
+
+                          HStack {
+                              Text("历史特训战报 (点击查看分项曲线)")
+                                  .font(.system(size: 16, weight: .black))
+                                  .foregroundColor(.white)
+                              Spacer()
+                              if !store.records.isEmpty {
+                                  Button("清空记录") {
+                                      store.clearRecords()
+                                  }
+                                  .font(.system(size: 12, weight: .bold))
+                                  .foregroundColor(.red)
+                              }
+                          }
+
+                          if store.records.isEmpty {
+                              Text("尚无训练数据，快去【特训中心】体验 HomeCourt 级 AR 视觉控球挑战吧！")
+                                  .font(.system(size: 13))
+                                  .foregroundColor(.white.opacity(0.65))
+                                  .padding(20)
+                                  .frame(maxWidth: .infinity)
+                                  .background(Color.white.opacity(0.05))
+                                  .clipShape(RoundedRectangle(cornerRadius: 16))
+                          } else {
+                              ForEach(store.records) { rec in
+                                  Button {
+                                      latestFinishedRecord = rec
+                                  } label: {
+                                      VStack(alignment: .leading, spacing: 6) {
+                                          HStack {
+                                              Text(rec.mode.rawValue)
+                                                  .font(.system(size: 15, weight: .bold))
+                                                  .foregroundColor(.white)
+                                              Spacer()
+                                              Text(rec.agilityRating)
+                                                  .font(.system(size: 12, weight: .heavy))
+                                                  .foregroundColor(.orange)
+                                          }
+                                          HStack(spacing: 12) {
+                                              Text("得分 \(rec.score)")
+                                              Text("命中 \(rec.hits)次 (\(rec.accuracyPercent)%)")
+                                              if rec.avgReactionMs > 0 {
+                                                  Text("均值 \(rec.avgReactionMs)ms")
+                                              }
+                                              Text("左/右 \(rec.leftAvgMs)/\(rec.rightAvgMs)ms")
+                                          }
+                                          .font(.system(size: 11, weight: .medium))
+                                          .foregroundColor(.white.opacity(0.72))
+                                      }
+                                      .padding(14)
+                                      .background(Color.white.opacity(0.06))
+                                      .clipShape(RoundedRectangle(cornerRadius: 14))
+                                  }
+                              }
+                          }
+                      }
+                      .padding(16)
+                  }
+              }
+
+              // MARK: - Custom Bottom Tab Bar
+              private var customBottomTabBar: some View {
+                  HStack(spacing: 0) {
+                      tabBarButton(index: 0, title: "AR 特训中心", icon: "figure.basketball")
+                      tabBarButton(index: 1, title: "球探成长档案", icon: "chart.xyaxis.line")
+                  }
+                  .padding(.top, 8)
+                  .padding(.bottom, 6)
+                  .background(Color(red: 0.05, green: 0.08, blue: 0.14))
+                  .overlay(
+                      Rectangle()
+                          .fill(Color.white.opacity(0.08))
+                          .frame(height: 1),
+                      alignment: .top
+                  )
+              }
+
+              private func tabBarButton(index: Int, title: String, icon: String) -> some View {
+                  let isSelected = (selectedTab == index)
+                  return Button {
+                      selectedTab = index
+                  } label: {
+                      VStack(spacing: 4) {
+                          Image(systemName: icon)
+                              .font(.system(size: 20, weight: .bold))
+                          Text(title)
+                              .font(.system(size: 11, weight: .bold))
+                      }
+                      .foregroundColor(isSelected ? .orange : .white.opacity(0.5))
+                      .frame(maxWidth: .infinity)
+                  }
+              }
+          }
+
+          // MARK: - HomeCourt-Style Post-Workout Telemetry Sheet
+          struct WorkoutResultSheet: View {
+              let record: TrainingRecord
+              let onDismiss: () -> Void
+
+              var body: some View {
+                  ScrollView {
+                      VStack(spacing: 18) {
+                          HStack {
+                              Text("HOMECOURT AI 球探分析报告")
+                                  .font(.system(size: 13, weight: .heavy))
+                                  .foregroundColor(.cyan)
+                              Spacer()
+                              Text(record.difficulty.rawValue)
+                                  .font(.system(size: 12, weight: .bold))
+                                  .foregroundColor(.orange)
+                          }
+                          .padding(.top, 20)
+
+                          VStack(spacing: 6) {
+                              Text(record.agilityRating)
+                                  .font(.system(size: 32, weight: .black, design: .rounded))
+                                  .foregroundColor(.yellow)
+                              Text(record.mode.rawValue)
+                                  .font(.system(size: 15, weight: .bold))
+                                  .foregroundColor(.white.opacity(0.85))
+                          }
+
+                          // Core Metrics Grid
+                          LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                              telemetryTile(title: "综合特训得分", value: "\(record.score)", unit: "PTS", color: .green)
+                              telemetryTile(title: "平均神经反射", value: "\(record.avgReactionMs)", unit: "ms", color: .cyan)
+                              telemetryTile(title: "最快单次爆发", value: "\(record.bestReactionMs)", unit: "ms", color: .yellow)
+                              telemetryTile(title: "最高连续命中", value: "x\(record.maxCombo)", unit: "准确率 \(record.accuracyPercent)%", color: .orange)
+                          }
+
+                          // Left vs Right Hand/Foot Symmetry Bar
+                          VStack(alignment: .leading, spacing: 8) {
+                              Text("左右侧反应均衡度对比 (Left vs Right Split)")
+                                  .font(.system(size: 13, weight: .bold))
+                                  .foregroundColor(.white)
+
+                              HStack {
+                                  VStack(alignment: .leading) {
+                                      Text("左侧/左手均值")
+                                          .font(.system(size: 11))
+                                          .foregroundColor(.white.opacity(0.65))
+                                      Text("\(record.leftAvgMs) ms")
+                                          .font(.system(size: 16, weight: .black, design: .rounded))
+                                          .foregroundColor(.orange)
+                                  }
+                                  Spacer()
+                                  VStack(alignment: .trailing) {
+                                      Text("右侧/右手均值")
+                                          .font(.system(size: 11))
+                                          .foregroundColor(.white.opacity(0.65))
+                                      Text("\(record.rightAvgMs) ms")
+                                          .font(.system(size: 16, weight: .black, design: .rounded))
+                                          .foregroundColor(.cyan)
+                                  }
+                              }
+                          }
+                          .padding(14)
+                          .background(Color.white.opacity(0.06))
+                          .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                          // Split Reaction Curve Bar Chart
+                          if !record.samples.isEmpty {
+                              VStack(alignment: .leading, spacing: 10) {
+                                  Text("单次触靶反应耗时分布 (越低越快)")
+                                      .font(.system(size: 13, weight: .bold))
+                                      .foregroundColor(.white)
+
+                                  HStack(alignment: .bottom, spacing: 6) {
+                                      ForEach(Array(record.samples.prefix(18))) { sample in
+                                          let normHeight = max(16.0, min(90.0, (1200.0 - Double(min(1100, sample.reactionMs))) / 11.0))
+                                          VStack(spacing: 4) {
+                                              RoundedRectangle(cornerRadius: 4)
+                                                  .fill(sample.wasHit ? (sample.isLeftHandOrSide ? Color.orange : Color.cyan) : Color.red)
+                                                  .frame(height: CGFloat(normHeight))
+                                              Text("#\(sample.index)")
+                                                  .font(.system(size: 8, weight: .bold))
+                                                  .foregroundColor(.white.opacity(0.5))
+                                          }
+                                          .frame(maxWidth: .infinity)
+                                      }
+                                  }
+                                  .frame(height: 110)
+                              }
+                              .padding(14)
+                              .background(Color.white.opacity(0.06))
+                              .clipShape(RoundedRectangle(cornerRadius: 16))
+                          }
+
+                          Button(action: onDismiss) {
+                              Text("保存球探报告 • 继续突破")
+                                  .font(.system(size: 16, weight: .black))
+                                  .foregroundColor(.black)
+                                  .frame(maxWidth: .infinity)
+                                  .frame(height: 52)
+                                  .background(Color.orange)
+                                  .clipShape(RoundedRectangle(cornerRadius: 16))
+                          }
+                          .padding(.top, 6)
+                      }
+                      .padding(20)
+                  }
+                  .background(Color(red: 0.05, green: 0.08, blue: 0.14).ignoresSafeArea())
+              }
+
+              private func telemetryTile(title: String, value: String, unit: String, color: Color) -> some View {
+                  VStack(alignment: .leading, spacing: 4) {
+                      Text(title)
+                          .font(.system(size: 11, weight: .semibold))
+                          .foregroundColor(.white.opacity(0.65))
+                      HStack(alignment: .firstTextBaseline, spacing: 4) {
+                          Text(value)
+                              .font(.system(size: 24, weight: .black, design: .rounded))
+                              .foregroundColor(color)
+                          Text(unit)
+                              .font(.system(size: 11, weight: .bold))
+                              .foregroundColor(.white.opacity(0.75))
+                      }
+                  }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(14)
+                  .background(Color.white.opacity(0.07))
+                  .clipShape(RoundedRectangle(cornerRadius: 16))
+              }
+          }
+          EOF
+
+          # 10. Generate App Entry Point
+          cat << 'EOF' > HoopFlashPro/Sources/HoopFlashProApp.swift
+          import SwiftUI
+
+          @main
+          struct HoopFlashProApp: App {
+              init() {
+                  UIApplication.shared.isIdleTimerDisabled = true
+              }
+
+              var body: some Scene {
+                  WindowGroup {
+                      ContentView()
+                          .preferredColorScheme(.dark)
+                  }
+              }
+          }
+          EOF
+
+          # 11. Generate project.yml for XcodeGen
+          cat << 'EOF' > project.yml
+          name: HoopFlashPro
+          options:
+            bundleIdPrefix: com.hoopflash.trainer
+            deploymentTarget:
+              iOS: "15.0"
+          targets:
+            HoopFlashPro:
+              type: application
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources:
+                - path: HoopFlashPro/Sources
+              resources:
+                - path: HoopFlashPro/Resources/Assets.xcassets
+              info:
+                path: HoopFlashPro/Resources/Info.plist
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.hoopflash.trainer.app
+                  INFOPLIST_FILE: HoopFlashPro/Resources/Info.plist
+                  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+                  SWIFT_VERSION: "5.0"
+                  TARGETED_DEVICE_FAMILY: "1,2"
+                  CODE_SIGN_IDENTITY: ""
+                  CODE_SIGNING_REQUIRED: "NO"
+                  CODE_SIGNING_ALLOWED: "NO"
+                  ENABLE_BITCODE: "NO"
+                  ENABLE_PREVIEWS: "NO"
+          EOF
+
+      - name: Generate Xcode Project with XcodeGen
+        run: |
+          xcodegen generate
+
+      - name: Compile iOS Release Archive (Unsigned)
+        run: |
+          xcodebuild clean build \
+            -project HoopFlashPro.xcodeproj \
+            -scheme HoopFlashPro \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package Unsigned .ipa Bundle
+        run: |
+          mkdir -p build/Payload
+          cp -r build/DerivedData/Build/Products/Release-iphoneos/HoopFlashPro.app build/Payload/
+          cd build
+          zip -r9 HoopFlashPro-Unsigned.ipa Payload
+          ls -lh HoopFlashPro-Unsigned.ipa
+
+      - name: Upload Direct Uncompressed IPA to GitHub Releases (No Outer Zip)
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.${{ github.run_number }}
+          name: "HoopFlash Pro 2.0 (HomeCourt AR 级重构版 • 免解压直装 .ipa)"
+          body: |
+            ### 🏀 HoopFlash Pro 2.0 — 深度对标 HomeCourt 的 AR 篮球敏捷与反应训练系统
+            - **免解压直链下载**：点击下方 Assets 中的 `HoopFlashPro-Unsigned.ipa` 即可直接下载安装。
+            - **本次核心升级**：
+              1. **根治 AI 视觉摸锥模式闪退**：重写 `AVAudioEngine` 硬件声道格式自适应与 `VNDetectHumanBodyPoseRequest` 25FPS 单帧节流锁（防止 Vision 线程并发爆内存与音频采样率断言崩溃）。
+              2. **解决全屏黑边与排版挤压**：补齐原生 `UILaunchScreen` 全屏配置，移除遮挡顶部的系统半透明导航栏，重构胶囊式功能开关、无截断难度分段按钮与全宽操作栏。
+              3. **深度引入 HomeCourt AR 核心玩法**：新增【AR 退后入框身体校准 + 举手凌空触碰绿圈无接触开局】、【手肘到手腕向量外推手掌中心 + 彗星轨迹尾迹】、【AR 护球手闪电触靶】、【AR 边线折返 + 虚拟高空横杆下潜闪避】、【AR 扑防双手封盖干扰 + 假动作识别】以及赛后【左右手反应对称度与单次反应柱状曲线图】。
+          files: build/HoopFlashPro-Unsigned.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Build Artifact (Fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HoopFlashPro-Unsigned.ipa
+          path: build/HoopFlashPro-Unsigned.ipa
+          compression-level: 0
